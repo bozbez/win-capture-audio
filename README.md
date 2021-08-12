@@ -1,12 +1,12 @@
 # win-capture-audio
 
-![overview](https://raw.githubusercontent.com/bozbez/win-capture-audio/main/media/overview.png)
-
 An OBS plugin based on OBS's win-capture/game-capture that hooks WASAPI's audio output functions (rather than the various graphics API funcitons) that enables capture of audio streams directly from applications. This eliminates the need for third-party software or hardware audio mixing tools that introduce complexity, and in the case of software tools introduce mandatory latency.
 
 The modus operandi is identical to the aforementioned game-capture plugin (and most likely to Discord's solution), and is inherently liable to instability and other issues due to the lack of a more "official" solution from the Windows API.
 
-DISCLAIMER: I am not able to guarantee that using this is anti-cheat safe, however similar hook methods are employed in many widely deployed applications (Discord, Steam Overlay, RTSS, NVIDIA's ShadowPlay, etc...).
+WARNING: I am not able to guarantee that using this is anti-cheat safe, however similar hook methods are employed in many widely deployed applications (Discord, Steam Overlay, RTSS, NVIDIA's ShadowPlay, etc...).
+
+![overview](https://raw.githubusercontent.com/bozbez/win-capture-audio/main/media/overview.png)
 
 ## Limitations (current)
 
