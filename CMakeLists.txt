@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(win-capture-audio)
+project(win-capture-audio VERSION 1.0.0)
 
-find_package(LibObs REQUIRED)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+find_package(LibObs REQUIRED)
 
 set(win-capture-audio_SOURCES
     src/plugin.c
