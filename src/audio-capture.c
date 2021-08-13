@@ -1,4 +1,6 @@
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include <windows.h>
 #include <mmreg.h>
 
@@ -10,19 +12,42 @@
 #include <util/platform.h>
 
 #include "media-io/audio-io.h"
+#include "util/base.h"
 #include "window-helpers.h"
 #include "hook-info.h"
 #include "obfuscate.h"
 #include "inject-library.h"
 
-#define do_log(level, format, ...)                   \
-	blog(level, "[audio-capture: '%s'] " format, \
-	     obs_source_get_name(ctx->source), ##__VA_ARGS__)
+#define do_log(level, format, ...)                                 \
+	do_log_source(ctx->source, level, "(%s) " format, __func__, \
+		      ##__VA_ARGS__)
+
+inline static void do_log_source(const obs_source_t *source, int level,
+				 const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+
+	const char *name = obs_source_get_name(source);
+	int len = strlen(name);
+
+	const char *format_source = len <= 8 ? "[audio-capture: '%s'] %s"
+					     : "[audio-capture: '%.8s...'] %s";
+
+	int len_full = strlen(format_source) + 12 + strlen(format);
+	char *format_full = bzalloc(len_full);
+
+	snprintf(format_full, len_full, format_source, name, format);
+	blogva(level, format_full, args);
+
+	bfree(format_full);
+	va_end(args);
+}
 
 #define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
-#define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
+#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 
 /* clang-format off */
 
@@ -59,9 +84,10 @@
 #define HOTKEY_STOP                 "hotkey_stop"
 
 #define HOOK_INTERVAL_IMMEDIATE     0.0f
-#define HOOK_INTERVAL_PING          0.1f
+#define HOOK_INTERVAL_PING          0.2f
 #define HOOK_INTERVAL_DEFAULT       2.0f
 #define HOOK_INTERVAL_ERROR         4.0f
+#define HOOK_INTERVAL_KEEPALIVE     4.0f
 
 /* clang-format on */
 
@@ -101,6 +127,7 @@ typedef struct audio_capture_context {
 	obs_hotkey_pair_id hotkey_pair;
 	obs_source_t *source;
 
+	CRITICAL_SECTION timer_section;
 	HANDLE timer;
 	HANDLE timer_queue;
 
@@ -114,6 +141,8 @@ typedef struct audio_capture_context {
 
 	DWORD next_process_id;
 	DWORD next_thread_id;
+
+	bool window_selected;
 
 	HANDLE injector_process;
 	HANDLE target_process;
@@ -186,6 +215,8 @@ VOID CALLBACK set_rehook(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 
 void set_rehook_timer(audio_capture_context_t *ctx, float interval)
 {
+	EnterCriticalSection(&ctx->timer_section);
+
 	EnterCriticalSection(&ctx->config_section);
 	DWORD time_millis =
 		(DWORD)(ctx->config.retry_interval * interval * 1000.0);
@@ -197,18 +228,11 @@ void set_rehook_timer(audio_capture_context_t *ctx, float interval)
 		ctx->timer = NULL;
 	}
 
-	info("%s: setting timer for %ld millis", __func__, time_millis);
+	debug("setting timer for %ld millis", time_millis);
 	CreateTimerQueueTimer(&ctx->timer, ctx->timer_queue, set_rehook, ctx,
 			      time_millis, 0, WT_EXECUTEINTIMERTHREAD);
-}
 
-void cancel_rehook_timer(audio_capture_context_t *ctx)
-{
-	if (ctx->timer != NULL) {
-		DeleteTimerQueueTimer(ctx->timer_queue, ctx->timer,
-				      INVALID_HANDLE_VALUE);
-		ctx->timer = NULL;
-	}
+	LeaveCriticalSection(&ctx->timer_section);
 }
 
 static wchar_t *get_string_error(DWORD err)
@@ -232,8 +256,8 @@ static bool init_hook_data(audio_capture_context_t *ctx)
 				   0, sizeof(audio_hook_data_t), name);
 
 	if (!ctx->hook_data_map) {
-		error("%s: failed to create file mapping with name: %ls: %ls",
-		      __func__, name, get_string_error(GetLastError()));
+		error("failed to create file mapping with name: %ls: %ls", name,
+		      get_string_error(GetLastError()));
 		return false;
 	}
 
@@ -244,13 +268,12 @@ static bool init_hook_data(audio_capture_context_t *ctx)
 		CloseHandle(ctx->hook_data_map);
 		ctx->hook_data_map = NULL;
 
-		error("%s: failed to create file map view (%s)",
+		error("failed to create file map view (%s)",
 		      get_string_error(GetLastError()));
 
 		return false;
 	}
 
-	info("%s: successfully created file mapping", __func__);
 	return true;
 }
 
@@ -416,7 +439,7 @@ static inline bool hook_direct(audio_capture_context_t *ctx,
 
 	os_utf8_to_wcs_ptr(hook_path_rel, 0, &hook_path_rel_w);
 	if (!hook_path_rel_w) {
-		warn("%s: could not convert string", __func__);
+		warn("could not convert string");
 		return false;
 	}
 
@@ -425,16 +448,16 @@ static inline bool hook_direct(audio_capture_context_t *ctx,
 	bfree(hook_path_rel_w);
 
 	if (path_ret == NULL) {
-		warn("%s: could not make absolute path", __func__);
+		warn("could not make absolute path");
 		return false;
 	}
 
-	info("%s: made absolute hook path: %ls", __func__, hook_path_abs_w);
+	debug("made absolute hook path: %ls", hook_path_abs_w);
 
 	HANDLE process =
 		open_process(PROCESS_ALL_ACCESS, false, ctx->process_id);
 	if (!process) {
-		warn("%s: could not open process: %s (%lu)", __func__,
+		warn("could not open process: %s (%lu)",
 		     ctx->config.window_info.executable, GetLastError());
 		return false;
 	}
@@ -443,7 +466,7 @@ static inline bool hook_direct(audio_capture_context_t *ctx,
 	CloseHandle(process);
 
 	if (ret != 0) {
-		warn("%s: inject failed: %d", __func__, ret);
+		warn("inject failed: %d", ret);
 		return false;
 	}
 
@@ -474,8 +497,8 @@ static inline bool create_inject_process(audio_capture_context_t *ctx,
 		 hook_dll_w, (unsigned long)indirect_hook,
 		 indirect_hook ? ctx->thread_id : ctx->process_id);
 
-	info("%s: attempting to create helper process with args: \"%ls\"",
-	     __func__, command_line_w);
+	debug("attempting to create helper process with args: \"%ls\"",
+	      command_line_w);
 
 	success = !!CreateProcessW(inject_path_w, command_line_w, NULL, NULL,
 				   false, CREATE_NO_WINDOW, NULL, NULL,
@@ -489,11 +512,10 @@ static inline bool create_inject_process(audio_capture_context_t *ctx,
 
 		ctx->injector_process = process_info.hProcess;
 
-		info("%s: created injector process: %llu", __func__,
-		     ctx->injector_process);
+		debug("created injector process: %llu", ctx->injector_process);
 	} else {
-		warn("%s: failed to create inject helper process: %lu",
-		     __func__, GetLastError());
+		warn("failed to create inject helper process: %lu",
+		     GetLastError());
 	}
 
 	bfree(command_line_w);
@@ -506,8 +528,7 @@ static inline bool create_inject_process(audio_capture_context_t *ctx,
 
 static bool try_inject(audio_capture_context_t *ctx)
 {
-	info("%s: attempting to inject: process_id = %lu", __func__,
-	     ctx->process_id);
+	debug("attempting to inject: process_id = %lu", ctx->process_id);
 
 	bool success = false;
 
@@ -515,19 +536,19 @@ static bool try_inject(audio_capture_context_t *ctx)
 	char *hook_path;
 
 	if (ctx->target_is_64bit) {
-		info("%s: target is 64 bit", __func__);
+		debug("target is 64 bit");
 
 		inject_path = obs_module_file("inject-helper64.exe");
 		hook_path = obs_module_file("audio-hook64.dll");
 	} else {
-		info("%s: target is 32 bit", __func__);
+		debug("target is 32 bit");
 
 		inject_path = obs_module_file("inject-helper32.exe");
 		hook_path = obs_module_file("audio-hook32.dll");
 	}
 
-	info("%s: inject helper path: \"%s\", hook path: \"%s\"", __func__,
-	     inject_path, hook_path);
+	debug("inject helper path: \"%s\", hook path: \"%s\"", inject_path,
+	      hook_path);
 
 	if (!check_file_integrity(ctx, inject_path, "inject helper"))
 		goto exit;
@@ -542,11 +563,11 @@ static bool try_inject(audio_capture_context_t *ctx)
 #endif
 
 	if (matching_architecture && !ctx->use_indirect_hook) {
-		info("%s: attempting direct hook", __func__);
+		debug("attempting direct hook");
 		success = hook_direct(ctx, hook_path);
 	} else {
-		info("%s: attempting %s helper hook", __func__,
-		     ctx->use_indirect_hook ? "indirect" : "direct");
+		debug("attempting %s helper hook",
+		      ctx->use_indirect_hook ? "indirect" : "direct");
 		success = create_inject_process(ctx, inject_path, hook_path);
 	}
 
@@ -570,7 +591,7 @@ static void try_unhook(audio_capture_context_t *ctx)
 	}
 
 	if (ctx->events[HOOK_WO_EVENT_STOP] != NULL) {
-		info("%s: signalling hook shutdown", __func__);
+		debug("signalling hook stop");
 		SetEvent(ctx->events[HOOK_WO_EVENT_STOP]);
 	}
 
@@ -587,58 +608,68 @@ static void audio_capture_hook_update(audio_capture_context_t *ctx)
 {
 	EnterCriticalSection(&ctx->config_section);
 
-	info("%s: settings update: mode = %d, "
-	     "priority =  %d, retry_interval = %f",
-	     __func__, ctx->config.mode, ctx->config.priority,
-	     ctx->config.retry_interval);
+	debug("mode = %d, priority =  %d, retry_interval = %f",
+	      ctx->config.mode, ctx->config.priority,
+	      ctx->config.retry_interval);
 
 	ctx->use_indirect_hook = ctx->config.use_indirect_hook;
 
 	if (ctx->config.mode == MODE_HOTKEY) {
-		info("%s: hotkey settings: hotkey_window = %lld", __func__,
-		     ctx->config.hotkey_window);
+		debug("hotkey settings: hotkey_window = %lld",
+		      ctx->config.hotkey_window);
 
-		ctx->next_thread_id = GetWindowThreadProcessId(
-			ctx->config.hotkey_window, &ctx->next_process_id);
+		if (ctx->config.hotkey_window != NULL) {
+			ctx->window_selected = true;
+			ctx->next_thread_id = GetWindowThreadProcessId(
+				ctx->config.hotkey_window,
+				&ctx->next_process_id);
+		} else {
+			ctx->window_selected = false;
+			ctx->next_process_id = 0;
+		}
 
 		LeaveCriticalSection(&ctx->config_section);
-		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
-
 		return;
 	}
 
 	if (ctx->config.window_info.title == NULL) {
-		info("%s: window settings: no window", __func__);
+		debug("window settings: no window");
 		ctx->next_process_id = 0;
+		ctx->window_selected = false;
 
 		LeaveCriticalSection(&ctx->config_section);
-		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
-
 		return;
 	}
 
-	info("%s: window settings: title = %s, "
-	     "class = %s, executable = %s",
-	     __func__, ctx->config.window_info.title,
-	     ctx->config.window_info.class, ctx->config.window_info.executable);
+	debug("window settings: title = %s, class = %s, executable = %s",
+	      ctx->config.window_info.title, ctx->config.window_info.class,
+	      ctx->config.window_info.executable);
 
+	ctx->window_selected = true;
 	HWND window = window_info_get_window(&ctx->config.window_info,
 					     ctx->config.priority);
 
-	ctx->next_thread_id =
-		GetWindowThreadProcessId(window, &ctx->next_process_id);
+	if (window != NULL) {
+		ctx->next_thread_id =
+			GetWindowThreadProcessId(window, &ctx->next_process_id);
+	} else {
+		ctx->next_process_id = 0;
+	}
 
 	LeaveCriticalSection(&ctx->config_section);
-	set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
 }
 
 bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 {
-	info("%s: rehook triggered: process_id = %lu, next_process_id = %lu",
-	     __func__, ctx->process_id, ctx->next_process_id);
+	debug("rehook triggered: process_id = %lu, next_process_id = %lu",
+	      ctx->process_id, ctx->next_process_id);
 
 	if (ctx->next_process_id == 0) {
 		try_unhook(ctx);
+
+		if (ctx->window_selected)
+			set_rehook_timer(ctx, HOOK_INTERVAL_DEFAULT);
+
 		return true;
 	}
 
@@ -646,6 +677,8 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 		if (!ctx->active) {
 			SetEvent(ctx->events[HOOK_WO_EVENT_START]);
 			set_rehook_timer(ctx, HOOK_INTERVAL_DEFAULT);
+		} else {
+			set_rehook_timer(ctx, HOOK_INTERVAL_KEEPALIVE);
 		}
 
 		return true;
@@ -658,12 +691,12 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 		ctx->thread_id = ctx->next_thread_id;
 
 		if (!init_hook_data(ctx)) {
-			error("%s: failed to create hook data", __func__);
+			error("failed to create hook data");
 			return false;
 		}
 
 		if (!init_hook_events(ctx)) {
-			error("%s: failed to create hook events", __func__);
+			error("failed to create hook events");
 			return false;
 		}
 
@@ -679,10 +712,10 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 		GetExitCodeProcess(ctx->injector_process, &exit_code);
 
 		if (exit_code != 0) {
-			warn("%s: last inject process failed: %ld", __func__,
+			warn("last inject process failed: %ld",
 			     (long)exit_code);
 		} else {
-			info("%s: last inject process succeeded!", __func__);
+			debug("last inject process succeeded!");
 		}
 	}
 
@@ -692,7 +725,7 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 	}
 
 	if (!ctx->injected && !try_inject(ctx)) {
-		warn("%s: try_inject failed", __func__);
+		warn("try_inject failed");
 		set_rehook_timer(ctx, HOOK_INTERVAL_ERROR);
 		return true;
 	}
@@ -765,7 +798,7 @@ static enum audio_format get_obs_format(WAVEFORMATEXTENSIBLE *format)
 static void audio_capture_hook_forward_data(audio_capture_context_t *ctx)
 {
 	if (InterlockedCompareExchange(&ctx->hook_data->lock, 1, 0) != 0) {
-		warn("%s: couldn't acquire lock", __func__);
+		warn("couldn't acquire lock");
 		return;
 	}
 
@@ -793,31 +826,27 @@ static bool audio_capture_tick(audio_capture_context_t *ctx, int event_id)
 
 	switch (event_id) {
 	case EVENT_SHUTDOWN:
-		info("%s: shutting down", __func__);
+		debug("shutting down");
 
 		try_unhook(ctx);
 		shutdown = true;
 
 		break;
 
-	case EVENT_UPDATE:
-		audio_capture_hook_update(ctx);
-		break;
-
 	case EVENT_REHOOK:
+		audio_capture_hook_update(ctx);
 		shutdown = !audio_capture_hook_rehook(ctx);
 		break;
 
 	case HOOK_EVENT_READY:
-		info("%s: hook ready", __func__);
+		debug("hook ready");
 		ctx->injected = true;
 
 		break;
 
 	case HOOK_EVENT_ACTIVE:
-		info("%s: hook activated", __func__);
+		debug("hook activated");
 		ctx->active = true;
-		cancel_rehook_timer(ctx);
 
 		break;
 
@@ -827,7 +856,7 @@ static bool audio_capture_tick(audio_capture_context_t *ctx, int event_id)
 		break;
 
 	default:
-		error("%s: unexpected event id", __func__);
+		error("unexpected event id");
 
 		try_unhook(ctx);
 		shutdown = true;
@@ -858,8 +887,7 @@ static DWORD WINAPI audio_capture_thread(LPVOID lpParam)
 
 		if (!(event_id >= WAIT_OBJECT_0 &&
 		      event_id < WAIT_OBJECT_0 + num_events)) {
-			error("%s: unexpected event id: %d", __func__,
-			      event_id);
+			error("unexpected event id: %d", event_id);
 			return 1;
 		}
 
@@ -929,8 +957,9 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	}
 
 	LeaveCriticalSection(&ctx->config_section);
+
 	if (need_update)
-		SetEvent(ctx->events[EVENT_UPDATE]);
+		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
 }
 
 static bool hotkey_start(void *data, obs_hotkey_pair_id id,
@@ -944,14 +973,14 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 
 	EnterCriticalSection(&ctx->config_section);
 	if (pressed && ctx->config.mode == MODE_HOTKEY) {
-		info("Activate hotkey pressed");
+		debug("activate hotkey pressed");
 		ctx->config.hotkey_window = GetForegroundWindow();
 		needs_update = true;
 	}
 	LeaveCriticalSection(&ctx->config_section);
 
 	if (needs_update)
-		SetEvent(ctx->events[EVENT_UPDATE]);
+		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
 
 	return true;
 }
@@ -967,13 +996,13 @@ static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey,
 
 	EnterCriticalSection(&ctx->config_section);
 	if (pressed && ctx->config.mode == MODE_HOTKEY) {
-		info("Deactivate hotkey pressed");
+		debug("deactivate hotkey pressed");
 		ctx->config.hotkey_window = NULL;
 	}
 	LeaveCriticalSection(&ctx->config_section);
 
 	if (needs_update)
-		SetEvent(ctx->events[EVENT_UPDATE]);
+		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
 
 	return true;
 }
@@ -1011,6 +1040,8 @@ static void audio_capture_destroy(void *data)
 	window_info_destroy(&ctx->config.window_info);
 
 	DeleteCriticalSection(&ctx->config_section);
+	DeleteCriticalSection(&ctx->timer_section);
+
 	bfree(ctx);
 }
 
@@ -1022,6 +1053,7 @@ static void *audio_capture_create(obs_data_t *settings, obs_source_t *source)
 	ctx->source = source;
 
 	InitializeCriticalSection(&ctx->config_section);
+	InitializeCriticalSection(&ctx->timer_section);
 
 	ctx->timer_queue = CreateTimerQueue();
 	if (ctx->timer_queue == NULL)

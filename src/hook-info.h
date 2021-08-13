@@ -26,7 +26,7 @@
 
 #define NUM_HOOK_WO_EVENTS           4
 #define NUM_HOOK_EVENTS              3
-#define NUM_EVENTS                   3
+#define NUM_EVENTS                   2
 
 #define HOOK_WO_EVENTS_START         0
 #define HOOK_WO_EVENTS_END           (HOOK_WO_EVENTS_START + NUM_HOOK_WO_EVENTS)
@@ -53,7 +53,6 @@ enum event {
 	HOOK_EVENT_DATA,
 
 	EVENT_SHUTDOWN,
-	EVENT_UPDATE,
 	EVENT_REHOOK,
 };
 
@@ -72,7 +71,6 @@ static event_info_t event_info[NUM_EVENTS_TOTAL] = {
 	{HOOK_EVENT_ACTIVE_NAME, FALSE},
 	{HOOK_EVENT_DATA_NAME, FALSE},
 
-	{NULL, FALSE},
 	{NULL, FALSE},
 	{NULL, FALSE},
 };
