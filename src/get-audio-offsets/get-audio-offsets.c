@@ -1,5 +1,4 @@
 #include <vadefs.h>
-#include <vcruntime_string.h>
 #include <windows.h>
 #include <psapi.h>
 
@@ -130,7 +129,7 @@ static inline uint32_t vtable_offset(HMODULE module, void *cls,
 	return (uint32_t)(vtable[offset] - (uintptr_t)module);
 }
 
-uint32_t scan_render_client_client_offset(wasapi_info_t *info)
+static uint32_t scan_render_client_client_offset(wasapi_info_t *info)
 {
 	char *client_candidate = (char *)info->render_client;
 	for (int i = 1; i < 32 * 8; ++i) {
@@ -144,7 +143,7 @@ uint32_t scan_render_client_client_offset(wasapi_info_t *info)
 	return 0;
 }
 
-bool wave_formats_equal(WAVEFORMATEX *w1, WAVEFORMATEX *w2)
+static bool wave_formats_equal(WAVEFORMATEX *w1, WAVEFORMATEX *w2)
 {
 	__try {
 		int neq = memcmp(w1, w2, sizeof(WAVEFORMATEX));
@@ -155,7 +154,7 @@ bool wave_formats_equal(WAVEFORMATEX *w1, WAVEFORMATEX *w2)
 	return false;
 }
 
-uint32_t scan_render_client_format_offset(wasapi_info_t *info)
+static uint32_t scan_render_client_format_offset(wasapi_info_t *info)
 {
 	char *format_candidate = (char *)info->render_client;
 	for (int i = 1; i < 32 * 8; ++i) {
