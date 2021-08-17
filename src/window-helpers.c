@@ -1,3 +1,4 @@
+#include <util/base.h>
 #define PSAPI_VERSION 1
 
 #include <dwmapi.h>
@@ -172,26 +173,26 @@ static bool is_microsoft_internal_window_exe(const char *exe)
 }
 
 static const char *blacklisted_exes[] = {
-	"explorer",
-	"steam",
-	"battle.net",
-	"galaxyclient",
-	"skype",
-	"uplay",
-	"origin",
-	"devenv",
-	"taskmgr",
-	"chrome",
-	"discord",
-	"firefox",
-	"systemsettings",
-	"applicationframehost",
-	"cmd",
-	"shellexperiencehost",
-	"winstore.app",
-	"searchui",
-	"lockapp",
-	"windowsinternal.composableshell.experiences.textinput.inputapp",
+	"explorer.exe",
+	"steam.exe",
+	"battle.net.exe",
+	"galaxyclient.exe",
+	"skype.exe",
+	"uplay.exe",
+	"origin.exe",
+	"devenv.exe",
+	"taskmgr.exe",
+	"chrome.exe",
+	"discord.exe",
+	"firefox.exe",
+	"systemsettings.exe",
+	"applicationframehost.exe",
+	"cmd.exe",
+	"shellexperiencehost.exe",
+	"winstore.app.exe",
+	"searchui.exe",
+	"lockapp.exe",
+	"windowsinternal.composableshell.experiences.textinput.inputapp.exe",
 	NULL,
 };
 
@@ -200,8 +201,9 @@ bool is_blacklisted_exe(const char *exe)
 	if (!exe)
 		return false;
 
-	for (const char **vals = blacklisted_exes; *vals; vals++) {
-		if (astrcmpi(exe, *vals) == 0)
+	for (const char **bl_exe = blacklisted_exes; *bl_exe != NULL;
+	     ++bl_exe) {
+		if (astrcmpi(exe, *bl_exe) == 0)
 			return true;
 	}
 
@@ -404,10 +406,10 @@ static int window_rating(HWND window, enum window_priority priority,
 	struct dstr cur_class = {0};
 	struct dstr cur_title = {0};
 	struct dstr cur_exe = {0};
-	int val = 0x7FFFFFFF;
+	int val = INT_MAX;
 
 	if (!get_window_exe(&cur_exe, window))
-		return 0x7FFFFFFF;
+		return INT_MAX;
 	get_window_title(&cur_title, window);
 	get_window_class(&cur_class, window);
 
@@ -416,22 +418,19 @@ static int window_rating(HWND window, enum window_priority priority,
 	int title_val = abs(dstr_cmpi(&cur_title, title));
 
 	/* always match by name if class is generic */
-	if (generic_class) {
-		if (priority == WINDOW_PRIORITY_EXE && !exe_matches)
-			val = 0x7FFFFFFF;
-		else
-			val = title_val == 0 ? 0 : 0x7FFFFFFF;
-
+	if (priority == WINDOW_PRIORITY_CLASS && generic_class) {
+		val = title_val == 0 ? 0 : INT_MAX;
+		
 	} else if (priority == WINDOW_PRIORITY_CLASS) {
-		val = class_matches ? title_val : 0x7FFFFFFF;
-		if (val != 0x7FFFFFFF && !exe_matches)
+		val = class_matches ? title_val : INT_MAX;
+		if (val != INT_MAX && !exe_matches)
 			val += 0x1000;
 
 	} else if (priority == WINDOW_PRIORITY_TITLE) {
-		val = title_val == 0 ? 0 : 0x7FFFFFFF;
+		val = title_val == 0 ? 0 : INT_MAX;
 
 	} else if (priority == WINDOW_PRIORITY_EXE) {
-		val = exe_matches ? title_val : 0x7FFFFFFF;
+		val = exe_matches ? title_val : INT_MAX;
 	}
 
 	dstr_free(&cur_class);

@@ -706,8 +706,9 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 		return true;
 	}
 
-	// TODO: causes double-update on settings change
-	// shouldn't matter but a bit wasteful
+	// TODO: causes double-update on settings change...
+	// shouldn't matter (and better than the alternative)
+	// but a bit wasteful
 	audio_capture_hook_update(ctx);
 
 	if (ctx->process_id != ctx->next_process_id) {
