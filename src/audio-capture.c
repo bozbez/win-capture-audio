@@ -18,7 +18,7 @@
 #include "obfuscate.h"
 #include "inject-library.h"
 
-#define do_log(level, format, ...)                                 \
+#define do_log(level, format, ...)                                  \
 	do_log_source(ctx->source, level, "(%s) " format, __func__, \
 		      ##__VA_ARGS__)
 
@@ -598,6 +598,8 @@ static void try_unhook(audio_capture_context_t *ctx)
 	destroy_hook_data(ctx);
 	destroy_hook_events(ctx);
 
+	ctx->process_id = 0;
+
 	ctx->injected = false;
 	ctx->active = false;
 
@@ -667,22 +669,46 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 	if (ctx->next_process_id == 0) {
 		try_unhook(ctx);
 
-		if (ctx->window_selected)
-			set_rehook_timer(ctx, HOOK_INTERVAL_DEFAULT);
+		if (!ctx->window_selected)
+			return true;
 
-		return true;
+		audio_capture_hook_update(ctx);
+
+		if (ctx->next_process_id == 0) {
+			set_rehook_timer(ctx, HOOK_INTERVAL_DEFAULT);
+			return true;
+		}
 	}
 
 	if (ctx->injected && ctx->process_id == ctx->next_process_id) {
 		if (!ctx->active) {
 			SetEvent(ctx->events[HOOK_WO_EVENT_START]);
 			set_rehook_timer(ctx, HOOK_INTERVAL_DEFAULT);
-		} else {
-			set_rehook_timer(ctx, HOOK_INTERVAL_KEEPALIVE);
+			return true;
 		}
 
+		DWORD exit_code = 0;
+		if (!GetExitCodeProcess(ctx->target_process, &exit_code)) {
+			warn("failed to get target exit code (%s)",
+			      get_string_error(GetLastError()));
+		}
+
+		if (exit_code != STILL_ACTIVE) {
+			debug("target process died, rehooking");
+			ctx->next_process_id = 0;
+			try_unhook(ctx);
+
+			set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
+			return true;
+		}
+
+		set_rehook_timer(ctx, HOOK_INTERVAL_KEEPALIVE);
 		return true;
 	}
+
+	// TODO: causes double-update on settings change
+	// shouldn't matter but a bit wasteful
+	audio_capture_hook_update(ctx);
 
 	if (ctx->process_id != ctx->next_process_id) {
 		try_unhook(ctx);
@@ -698,6 +724,13 @@ bool audio_capture_hook_rehook(audio_capture_context_t *ctx)
 		if (!init_hook_events(ctx)) {
 			error("failed to create hook events");
 			return false;
+		}
+
+		if (!open_target_process(ctx)) {
+			warn("failed to open target process");
+			set_rehook_timer(ctx, HOOK_INTERVAL_ERROR);
+
+			return true;
 		}
 
 		SetEvent(ctx->events[HOOK_WO_EVENT_PING]);
@@ -834,6 +867,10 @@ static bool audio_capture_tick(audio_capture_context_t *ctx, int event_id)
 		break;
 
 	case EVENT_REHOOK:
+		shutdown = !audio_capture_hook_rehook(ctx);
+		break;
+
+	case EVENT_UPDATE:
 		audio_capture_hook_update(ctx);
 		shutdown = !audio_capture_hook_rehook(ctx);
 		break;
@@ -959,7 +996,7 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	LeaveCriticalSection(&ctx->config_section);
 
 	if (need_update)
-		set_rehook_timer(ctx, HOOK_INTERVAL_IMMEDIATE);
+		SetEvent(ctx->events[EVENT_UPDATE]);
 }
 
 static bool hotkey_start(void *data, obs_hotkey_pair_id id,
