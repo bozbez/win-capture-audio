@@ -14,10 +14,9 @@ WARNING: I am not able to guarantee that using this is anti-cheat safe, however 
 - No Windows App support (probably?)
 - Chrome and Chrome-based (e.g. Electron) applications don't work (probably a limitation of the process selection logic rather than the hooking)
 - Directly conflicts with Discord streaming (and maybe ShadowPlay) (unresolvable?)
-- Dodgy batch script installer
 
 ## Installation and Usage
 
-1. Head over to the [Releases](https://github.com/bozbez/win-capture-audio/releases) page and download the latest installation package
-2. If your OBS is in the default location in `Program Files` then run the aptly-named `install.bat` with administrator privileges, otherwise copy `win-capture-audio.dll` and `win-capture-audio.pdb` to `obs-studio/obs-plugins/64bit` and the contents of `data` to `obs-studio/data/obs-plugins/win-capture-audio` creating the folder if necessary
+1. Head over to the [Releases](https://github.com/bozbez/win-capture-audio/releases) page and download the latest installer (or zip if you are using a portable installation)
+2. Run the setup wizard, selecting your OBS folder when asked (or extract the zip to the portable OBS root directory)
 3. Lauch OBS and check out the newly available "Application Audio Output Capture" source
