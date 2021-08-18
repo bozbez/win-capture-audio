@@ -13,10 +13,12 @@ add_executable(inject-helper
 	${inject-helper_SOURCES})
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-	set(_output_suffix "64")
+    set(_output_suffix "64")
 else()
-	set(_output_suffix "32")
+    set(_output_suffix "32")
 endif()
 
 set_target_properties(inject-helper
 	PROPERTIES OUTPUT_NAME "inject-helper${_output_suffix}")
+
+copy_helper_lib(inject-helper)

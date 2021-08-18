@@ -12,10 +12,12 @@ target_include_directories(audio-hook PUBLIC ${DETOURS_INCLUDE_DIR})
 target_link_libraries(audio-hook ${DETOURS_LIBRARIES} psapi)
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-	set(_output_suffix "64")
+    set(_output_suffix "64")
 else()
-	set(_output_suffix "32")
+    set(_output_suffix "32")
 endif()
 
 set_target_properties(audio-hook
 	PROPERTIES OUTPUT_NAME "audio-hook${_output_suffix}")
+
+copy_helper_lib(audio-hook)
