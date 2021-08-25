@@ -16,6 +16,17 @@ enum window_search_mode {
 	EXCLUDE_MINIMIZED,
 };
 
+typedef struct window_info {
+	char *executable;
+	char *class;
+	char *title;
+} window_info_t;
+
+extern void window_info_destroy(window_info_t *info);
+extern bool window_info_cmp(window_info_t *info_a, window_info_t *info_b);
+extern HWND window_info_get_window(window_info_t *info,
+				   enum window_priority priority);
+
 extern bool get_window_exe(struct dstr *name, HWND window);
 extern void get_window_title(struct dstr *name, HWND hwnd);
 extern void get_window_class(struct dstr *class, HWND hwnd);
@@ -31,14 +42,4 @@ typedef bool (*add_window_cb)(const char *title, const char *class,
 extern void fill_window_list(obs_property_t *p, enum window_search_mode mode,
 			     add_window_cb callback);
 
-extern void build_window_strings(const char *str, char **class, char **title,
-				 char **exe);
-
-extern HWND find_window(enum window_search_mode mode,
-			enum window_priority priority, const char *class,
-			const char *title, const char *exe);
-
-extern HWND find_window_top_level(enum window_search_mode mode,
-				  enum window_priority priority,
-				  const char *class, const char *title,
-				  const char *exe);
+extern void build_window_strings(const char *str, window_info_t *info);

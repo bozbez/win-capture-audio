@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(win-capture-audio VERSION 1.0.0)
+project(win-capture-audio VERSION 2.0.0)
 
 set(PLUGIN_AUTHOR "bozbez")
 set(RELEASE_DIR "${PROJECT_SOURCE_DIR}/release")
@@ -22,12 +22,10 @@ set(win-capture-audio_SOURCES
     src/plugin.c
     src/audio-capture.c
     src/obfuscate.c
-    src/window-helpers.c
-    src/inject-library.c)
+    src/window-helpers.c)
 
 add_library(win-capture-audio MODULE ${win-capture-audio_SOURCES})
-target_link_libraries(win-capture-audio libobs dwmapi psapi ksuser)
-
+target_link_libraries(win-capture-audio libobs dwmapi psapi)
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND if $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>==1 (
@@ -81,10 +79,4 @@ function(copy_helper_lib)
     )
 endfunction()
 
-
-add_subdirectory(src/get-audio-offsets)
-add_subdirectory(src/audio-hook)
-add_subdirectory(src/inject-helper)
-
-add_custom_target(all-no-plugin)
-add_dependencies(all-no-plugin get-audio-offsets audio-hook inject-helper)
+add_subdirectory(src/audio-capture-helper)

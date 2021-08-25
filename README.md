@@ -1,19 +1,10 @@
 # win-capture-audio
 
-An OBS plugin based on OBS's win-capture/game-capture that hooks WASAPI's audio output functions (rather than the various graphics API funcitons) that enables capture of audio streams directly from applications. This eliminates the need for third-party software or hardware audio mixing tools that introduce complexity, and in the case of software tools introduce mandatory latency.
+An OBS plugin similar to OBS's win-capture/game-capture that uses [ActivateAudioInterfaceAsync](https://docs.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-activateaudiointerfaceasync) with [AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS](https://docs.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params) to capture audio output from a specific process (and optionally its tree of child processes). This eliminates the need for third-party software or hardware audio mixing tools that introduce complexity, and in the case of software tools introduce mandatory latency.
 
-The modus operandi is identical to the aforementioned game-capture plugin (and most likely to Discord's solution), and is inherently liable to instability and other issues due to the lack of a more "official" solution from the Windows API.
-
-WARNING: I am not able to guarantee that using this is anti-cheat safe, however similar hook methods are employed in many widely deployed applications (Discord, Steam Overlay, RTSS, NVIDIA's ShadowPlay, etc...).
+**This plugin requires an updated version of Windows 10 2004 (released 2020-05-27) or later.**
 
 ![overview](https://raw.githubusercontent.com/bozbez/win-capture-audio/main/media/overview.png)
-
-## Limitations (current)
-
-- WASAPI only (no DirectSound, WaveOut, etc...)
-- No Windows App support (probably?)
-- Chrome and Chrome-based (e.g. Electron) applications don't work (probably a limitation of the process selection logic rather than the hooking)
-- Directly conflicts with Discord streaming (and maybe ShadowPlay) (unresolvable?)
 
 ## Installation and Usage
 
