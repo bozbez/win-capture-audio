@@ -1,6 +1,8 @@
 # win-capture-audio
 
-An OBS plugin similar to OBS's win-capture/game-capture that uses [ActivateAudioInterfaceAsync](https://docs.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-activateaudiointerfaceasync) with [AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS](https://docs.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params) to capture audio output from a specific process (and optionally its tree of child processes). This eliminates the need for third-party software or hardware audio mixing tools that introduce complexity, and in the case of software tools introduce mandatory latency.
+An OBS plugin similar to OBS's win-capture/game-capture that allows for audio capture from a specific application, rather than the system's audio as a whole. This eliminates the need for third-party software or hardware audio mixing tools that introduce complexity, and in the case of software tools, introduce mandatory latency.
+
+Internally it uses [ActivateAudioInterfaceAsync](https://docs.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-activateaudiointerfaceasync) with [AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS](https://docs.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params). This initialization structure is only officially available on Windows 11, however it appears to work additionally on relatively recent versions of Windows 10.
 
 **This plugin requires an updated version of Windows 10 2004 (released 2020-05-27) or later.**
 
