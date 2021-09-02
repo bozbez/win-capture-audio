@@ -1,6 +1,7 @@
 #pragma once
 
 #include <media-io/audio-io.h>
+#include <util/platform.h>
 #include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -61,8 +62,8 @@ static inline void format_name_tag(wchar_t *buf, const wchar_t *name,
 
 static inline void format_tag(char *buf, DWORD target_pid)
 {
-	sprintf(buf, "%lu_%lu_%lu", GetCurrentProcessId(), GetCurrentThreadId(),
-		target_pid);
+	sprintf(buf, "%lu_%lu_%lu_%llu", GetCurrentProcessId(),
+		GetCurrentThreadId(), target_pid, os_gettime_ns());
 }
 
 typedef struct audio_capture_helper_data {
