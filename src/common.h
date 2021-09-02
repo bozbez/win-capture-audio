@@ -57,9 +57,10 @@ static inline void format_name_tag(wchar_t *buf, const wchar_t *name,
 	swprintf(buf, MAX_PATH, L"%s_%S", name, tag);
 }
 
-static inline void format_tag(char *buf)
+static inline void format_tag(char *buf, DWORD target_pid)
 {
-	sprintf(buf, "%lu_%lu", GetCurrentProcessId(), GetCurrentThreadId());
+	sprintf(buf, "%lu_%lu_%lu", GetCurrentProcessId(), GetCurrentThreadId(),
+		target_pid);
 }
 
 typedef struct audio_capture_helper_data {

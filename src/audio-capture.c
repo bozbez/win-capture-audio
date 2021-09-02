@@ -113,8 +113,79 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 	return open_process_proc(desired_access, inherit_handle, process_id);
 }
 
+static void destroy_data(audio_capture_context_t *ctx)
+{
+	if (ctx->data != NULL) {
+		UnmapViewOfFile((void **)ctx->data);
+		ctx->data = NULL;
+	}
+
+	safe_close_handle(&ctx->data_map);
+}
+
+static bool init_data(audio_capture_context_t *ctx)
+{
+
+	wchar_t name[MAX_PATH];
+	format_name_tag(name, HELPER_DATA_NAME, ctx->tag);
+	ctx->data_map = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL,
+					   PAGE_READWRITE, 0,
+					   sizeof(audio_capture_helper_data_t),
+					   name);
+	if (ctx->data_map == NULL) {
+		error("failed to create file mapping with name: %ls", name);
+		return false;
+	}
+
+	ctx->data = MapViewOfFile(ctx->data_map, FILE_MAP_ALL_ACCESS, 0, 0,
+				  sizeof(audio_capture_helper_data_t));
+	if (ctx->data == NULL) {
+		error("failed to map view of data map");
+		return false;
+	}
+
+	return true;
+}
+
+static void destroy_helper_events(audio_capture_context_t *ctx)
+{
+	for (int i = HELPER_WO_EVENTS_START; i < HELPER_EVENTS_END; ++i)
+		safe_close_handle(&ctx->events[i]);
+}
+
+static bool init_helper_events(audio_capture_context_t *ctx)
+{
+	for (int i = HELPER_WO_EVENTS_START; i < HELPER_EVENTS_END; ++i) {
+		wchar_t name[MAX_PATH];
+		format_name_tag(name, event_names[i], ctx->tag);
+
+		ctx->events[i] = CreateEventW(NULL, FALSE, FALSE, name);
+		if (ctx->events[i] == NULL) {
+			error("failed to create helper event");
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static void start_capture(audio_capture_context_t *ctx)
 {
+	ctx->tag = bzalloc(MAX_PATH * sizeof(char));
+	format_tag(ctx->tag, ctx->process_id);
+
+	debug("tag is: %s", ctx->tag);
+
+	if (!init_helper_events(ctx)) {
+		error("failed to init helper events");
+		return;
+	}
+
+	if (!init_data(ctx)) {
+		error("failed to init shmem data");
+		return;
+	}
+
 	char *helper_path = obs_module_file("audio-capture-helper.exe");
 	if (!check_file_integrity(ctx, helper_path, "helper"))
 		return;
@@ -168,6 +239,12 @@ static void stop_capture(audio_capture_context_t *ctx)
 	ctx->helper_process_id = 0;
 	safe_close_handle(&ctx->helper_process);
 	safe_close_handle(&ctx->process);
+
+	destroy_helper_events(ctx);
+	destroy_data(ctx);
+
+	bfree(ctx->tag);
+	ctx->tag = NULL;
 }
 
 static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
@@ -318,108 +395,39 @@ static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
 	return shutdown;
 }
 
-static void destroy_data(audio_capture_context_t *ctx)
-{
-	if (ctx->data != NULL) {
-		UnmapViewOfFile((void **)ctx->data);
-		ctx->data = NULL;
-	}
-
-	safe_close_handle(&ctx->data_map);
-}
-
-static bool init_data(audio_capture_context_t *ctx)
-{
-
-	wchar_t name[MAX_PATH];
-	format_name_tag(name, HELPER_DATA_NAME, ctx->tag);
-	ctx->data_map = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL,
-					   PAGE_READWRITE, 0,
-					   sizeof(audio_capture_helper_data_t),
-					   name);
-	if (ctx->data_map == NULL) {
-		error("failed to create file mapping with name: %ls", name);
-		return false;
-	}
-
-	ctx->data = MapViewOfFile(ctx->data_map, FILE_MAP_ALL_ACCESS, 0, 0,
-				  sizeof(audio_capture_helper_data_t));
-	if (ctx->data == NULL) {
-		error("failed to map view of data map");
-		return false;
-	}
-
-	return true;
-}
-
-static void destroy_helper_events(audio_capture_context_t *ctx)
-{
-	for (int i = HELPER_WO_EVENTS_START; i < HELPER_EVENTS_END; ++i)
-		safe_close_handle(&ctx->events[i]);
-}
-
-static bool init_helper_events(audio_capture_context_t *ctx)
-{
-
-	for (int i = HELPER_WO_EVENTS_START; i < HELPER_EVENTS_END; ++i) {
-		wchar_t name[MAX_PATH];
-		format_name_tag(name, event_names[i], ctx->tag);
-
-		ctx->events[i] = CreateEventW(NULL, FALSE, FALSE, name);
-		if (ctx->events[i] == NULL) {
-			error("failed to create helper event");
-			return false;
-		}
-	}
-
-	return true;
-}
-
 static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
 {
 	audio_capture_context_t *ctx = lpParam;
-	int ret = 0;
 
-	ctx->tag = bzalloc(MAX_PATH * sizeof(char));
-	format_tag(ctx->tag);
-
-	debug("tag is: %s", ctx->tag);
-
-	if (!init_helper_events(ctx)) {
-		error("failed to init helper events");
-		ret = 1;
-		goto exit;
-	}
-
-	if (!init_data(ctx)) {
-		error("failed to init shmem data");
-		ret = 1;
-		goto exit;
-	}
-
-	int num_perm_events = NUM_HELPER_EVENTS + NUM_EVENTS;
-	HANDLE *events = bzalloc((2 + num_perm_events) * sizeof(HANDLE));
-	for (int i = 0; i < num_perm_events; ++i)
-		events[i] = ctx->events[HELPER_EVENTS_START + i];
+	HANDLE *events = bzalloc((2 + NUM_EVENTS_TOTAL) * sizeof(HANDLE));
 
 	bool shutdown = false;
 	while (!shutdown) {
+		for (int i = 0; i < NUM_EVENTS_TOTAL; ++i)
+			events[i] = ctx->events[i];
+
 		int num_proc_events = 0;
 		if (ctx->process != NULL) {
-			events[num_perm_events + num_proc_events] =
+			events[NUM_EVENTS_TOTAL + num_proc_events] =
 				ctx->process;
 			num_proc_events++;
 		}
 
 		if (ctx->helper_process != NULL) {
-			events[num_perm_events + num_proc_events] =
+			events[NUM_EVENTS_TOTAL + num_proc_events] =
 				ctx->helper_process;
 			num_proc_events++;
 		}
 
-		int num_events = num_perm_events + num_proc_events;
-		DWORD event_id = WaitForMultipleObjects(num_events, events,
-							FALSE, INFINITE);
+		int num_events = NUM_EVENTS + num_proc_events;
+		int events_start = EVENTS_START;
+		if (events[HELPER_EVENTS_START] != NULL) {
+			num_events += NUM_HELPER_EVENTS;
+			events_start = HELPER_EVENTS_START;
+		}
+
+		DWORD event_id = WaitForMultipleObjects(
+			num_events, &events[events_start], FALSE, INFINITE);
 
 		if (!(event_id >= WAIT_OBJECT_0 &&
 		      event_id < WAIT_OBJECT_0 + num_events)) {
@@ -427,7 +435,7 @@ static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
 			return 1;
 		}
 
-		event_id += HELPER_EVENTS_START - WAIT_OBJECT_0;
+		event_id += events_start - WAIT_OBJECT_0;
 
 		// TODO make this less awkward?
 		if (num_proc_events == 1 && event_id == EVENT_PROCESS_TARGET &&
@@ -437,10 +445,8 @@ static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
 		shutdown = audio_capture_worker_tick(ctx, event_id);
 	}
 
-exit:
-	destroy_helper_events(ctx);
-	destroy_data(ctx);
-	return ret;
+	bfree(events);
+	return 0;
 }
 
 static void audio_capture_update(void *data, obs_data_t *settings)
@@ -578,7 +584,6 @@ static void audio_capture_destroy(void *data)
 	DeleteCriticalSection(&ctx->config_section);
 	DeleteCriticalSection(&ctx->timer_section);
 
-	bfree(ctx->tag);
 	bfree(ctx);
 }
 
@@ -772,7 +777,8 @@ static void audio_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, SETTING_WINDOW, "");
 	obs_data_set_default_int(settings, SETTING_WINDOW_PRIORITY,
 				 WINDOW_PRIORITY_EXE);
-	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE, false);
+	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE,
+				  false);
 	obs_data_set_default_int(settings, SETTING_RECAPTURE_RATE,
 				 RECAPTURE_RATE_NORMAL);
 }
