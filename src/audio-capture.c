@@ -1,3 +1,4 @@
+#include <media-io/audio-io.h>
 #include <obs.h>
 #include <stdint.h>
 #include <util/darray.h>
@@ -124,7 +125,7 @@ static void start_capture(audio_capture_context_t *ctx)
 	wchar_t *command_line_w = bzalloc(4096 * sizeof(wchar_t));
 	swprintf(command_line_w, 4096, L"\"%s\" %lu %S %S", helper_path_w,
 		 ctx->process_id,
-		 ctx->include_process_tree ? "include" : "exclude", ctx->tag);
+		 ctx->exclude_process_tree ? "exclude" : "include", ctx->tag);
 
 	STARTUPINFOW startup_info = {0};
 	PROCESS_INFORMATION process_info = {0};
@@ -184,7 +185,7 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 {
 	EnterCriticalSection(&ctx->config_section);
 
-	ctx->include_process_tree = ctx->config.include_process_tree;
+	ctx->exclude_process_tree = ctx->config.exclude_process_tree;
 
 	if (ctx->config.mode == MODE_HOTKEY) {
 		if (ctx->config.hotkey_window != NULL) {
@@ -215,6 +216,13 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 	else
 		ctx->next_process_id = 0;
 
+	if (ctx->next_process_id != 0) {
+		debug("resolved window: \"%s\" \"%s\" \"%s\" to PID %lu",
+		      ctx->config.window_info.title,
+		      ctx->config.window_info.class,
+		      ctx->config.window_info.executable, ctx->next_process_id);
+	}
+
 exit:
 	LeaveCriticalSection(&ctx->config_section);
 	audio_capture_worker_recapture(ctx);
@@ -243,6 +251,12 @@ static void audio_capture_worker_forward(audio_capture_context_t *ctx)
 		.timestamp = ctx->data->audio.timestamp};
 
 	InterlockedExchange(&ctx->data->lock, 0);
+
+	if (audio.format == AUDIO_FORMAT_UNKNOWN)
+		warn("unknown audio format");
+
+	if (audio.speakers == SPEAKERS_UNKNOWN)
+		warn("unknown audio channel configuration");
 
 	obs_source_output_audio(ctx->source, &audio);
 }
@@ -285,6 +299,9 @@ static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
 			warn("helper died with exit code: %lu", code);
 		else
 			warn("helper died and failed to get exit code");
+
+		safe_close_handle(&ctx->helper_process);
+		ctx->helper_process_id = 0;
 
 		set_update_timer(ctx, RECAPTURE_INTERVAL_ERROR);
 		break;
@@ -434,8 +451,8 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	audio_capture_config_t new_config = {
 		.mode = obs_data_get_int(settings, SETTING_MODE),
 		.priority = obs_data_get_int(settings, SETTING_WINDOW_PRIORITY),
-		.include_process_tree = obs_data_get_bool(
-			settings, SETTING_INCLUDE_PROCESS_TREE),
+		.exclude_process_tree = obs_data_get_bool(
+			settings, SETTING_EXCLUDE_PROCESS_TREE),
 		.retry_interval = recapture_rate_to_float(
 			obs_data_get_int(settings, SETTING_RECAPTURE_RATE)),
 	};
@@ -468,10 +485,10 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 		need_update = true;
 	}
 
-	if (ctx->config.include_process_tree !=
-	    new_config.include_process_tree) {
-		ctx->config.include_process_tree =
-			new_config.include_process_tree;
+	if (ctx->config.exclude_process_tree !=
+	    new_config.exclude_process_tree) {
+		ctx->config.exclude_process_tree =
+			new_config.exclude_process_tree;
 		need_update = true;
 	}
 
@@ -543,7 +560,7 @@ static void audio_capture_destroy(void *data)
 	}
 
 	safe_close_handle(&ctx->worker_thread);
-	
+
 	if (ctx->timer != NULL)
 		DeleteTimerQueueTimer(ctx->timer_queue, ctx->timer, NULL);
 
@@ -728,9 +745,9 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_list_add_int(p, TEXT_WINDOW_PRIORITY_EXE,
 				  WINDOW_PRIORITY_EXE);
 
-	// Include process tree setting
-	p = obs_properties_add_bool(ps, SETTING_INCLUDE_PROCESS_TREE,
-				    TEXT_INCLUDE_PROCESS_TREE);
+	// Exclude process tree setting
+	p = obs_properties_add_bool(ps, SETTING_EXCLUDE_PROCESS_TREE,
+				    TEXT_EXCLUDE_PROCESS_TREE);
 
 	// Recapture rate setting
 	p = obs_properties_add_list(ps, SETTING_RECAPTURE_RATE,
@@ -755,7 +772,7 @@ static void audio_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, SETTING_WINDOW, "");
 	obs_data_set_default_int(settings, SETTING_WINDOW_PRIORITY,
 				 WINDOW_PRIORITY_EXE);
-	obs_data_set_default_bool(settings, SETTING_INCLUDE_PROCESS_TREE, true);
+	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE, false);
 	obs_data_set_default_int(settings, SETTING_RECAPTURE_RATE,
 				 RECAPTURE_RATE_NORMAL);
 }
