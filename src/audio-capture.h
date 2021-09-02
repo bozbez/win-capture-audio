@@ -38,7 +38,7 @@ inline static void do_log_source(const obs_source_t *source, int level,
 #define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
-#define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
+#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 
 /* clang-format off */
 
@@ -47,7 +47,7 @@ inline static void do_log_source(const obs_source_t *source, int level,
 #define SETTING_WINDOW                 "window"
 #define SETTING_WINDOW_PRIORITY        "window_priority"
 
-#define SETTING_INCLUDE_PROCESS_TREE   "include_process_tree"
+#define SETTING_EXCLUDE_PROCESS_TREE   "exclude_process_tree"
 
 #define SETTING_RECAPTURE_RATE         "recapture_rate"
 
@@ -64,7 +64,7 @@ inline static void do_log_source(const obs_source_t *source, int level,
 #define TEXT_HOTKEY_START              obs_module_text("Hotkey.Start")
 #define TEXT_HOTKEY_STOP               obs_module_text("Hotkey.Stop")
 
-#define TEXT_INCLUDE_PROCESS_TREE      obs_module_text("IncludeProcessTree")
+#define TEXT_EXCLUDE_PROCESS_TREE      obs_module_text("ExcludeProcessTree")
 
 #define TEXT_RECAPTURE_RATE            obs_module_text("RecaptureRate")
 #define TEXT_RECAPTURE_RATE_SLOW       obs_module_text("RecaptureRate.Slow")
@@ -112,7 +112,7 @@ typedef struct audio_capture_config {
 	window_info_t window_info;
 	enum window_priority priority;
 
-	bool include_process_tree;
+	bool exclude_process_tree;
 	float retry_interval;
 } audio_capture_config_t;
 
@@ -144,5 +144,5 @@ typedef struct audio_capture_context {
 	DWORD next_process_id;
 
 	bool window_selected;
-	bool include_process_tree;
+	bool exclude_process_tree;
 } audio_capture_context_t;

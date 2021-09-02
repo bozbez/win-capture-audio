@@ -1,3 +1,4 @@
+#include <media-io/audio-io.h>
 #include <obs.h>
 #include <stdint.h>
 #include <util/darray.h>
@@ -112,195 +113,6 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 	return open_process_proc(desired_access, inherit_handle, process_id);
 }
 
-static void start_capture(audio_capture_context_t *ctx)
-{
-	char *helper_path = obs_module_file("audio-capture-helper.exe");
-	if (!check_file_integrity(ctx, helper_path, "helper"))
-		return;
-
-	wchar_t *helper_path_w;
-	os_utf8_to_wcs_ptr(helper_path, 0, &helper_path_w);
-
-	wchar_t *command_line_w = bzalloc(4096 * sizeof(wchar_t));
-	swprintf(command_line_w, 4096, L"\"%s\" %lu %S %S", helper_path_w,
-		 ctx->process_id,
-		 ctx->include_process_tree ? "include" : "exclude", ctx->tag);
-
-	STARTUPINFOW startup_info = {0};
-	PROCESS_INFORMATION process_info = {0};
-
-	startup_info.cb = sizeof(startup_info);
-
-	debug("launching helper with command line: %ls", command_line_w);
-	bool success = CreateProcessW(NULL, command_line_w, NULL, NULL, false,
-				      CREATE_NO_WINDOW, NULL, NULL,
-				      &startup_info, &process_info);
-
-	if (success) {
-		safe_close_handle(&process_info.hThread);
-
-		ctx->helper_process_id = process_info.dwProcessId;
-		ctx->helper_process = process_info.hProcess;
-	} else {
-		error("failed to create helper process");
-	}
-
-	ctx->process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
-				    false, ctx->process_id);
-
-	if (ctx->process == NULL)
-		warn("failed to open target process, can't detect termination");
-
-	bfree(command_line_w);
-	bfree(helper_path_w);
-}
-
-static void stop_capture(audio_capture_context_t *ctx)
-{
-	if (ctx->helper_process_id != 0) {
-		SetEvent(ctx->events[HELPER_WO_EVENT_SHUTDOWN]);
-		WaitForSingleObject(ctx->helper_process, INFINITE);
-
-		ResetEvent(ctx->events[HELPER_WO_EVENT_SHUTDOWN]);
-	}
-
-	ctx->helper_process_id = 0;
-	safe_close_handle(&ctx->helper_process);
-	safe_close_handle(&ctx->process);
-}
-
-static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
-{
-	stop_capture(ctx);
-	ctx->process_id = ctx->next_process_id;
-
-	if (ctx->process_id != 0)
-		start_capture(ctx);
-	else if (ctx->window_selected)
-		set_update_timer(ctx, RECAPTURE_INTERVAL_DEFAULT);
-}
-
-static void audio_capture_worker_update(audio_capture_context_t *ctx)
-{
-	EnterCriticalSection(&ctx->config_section);
-
-	ctx->include_process_tree = ctx->config.include_process_tree;
-
-	if (ctx->config.mode == MODE_HOTKEY) {
-		if (ctx->config.hotkey_window != NULL) {
-			ctx->window_selected = true;
-			GetWindowThreadProcessId(ctx->config.hotkey_window,
-						 &ctx->next_process_id);
-		} else {
-			ctx->window_selected = false;
-			ctx->next_process_id = 0;
-		}
-
-		goto exit;
-	}
-
-	if (ctx->config.window_info.title == NULL) {
-		ctx->next_process_id = 0;
-		ctx->window_selected = false;
-
-		goto exit;
-	}
-
-	ctx->window_selected = true;
-	HWND window = window_info_get_window(&ctx->config.window_info,
-					     ctx->config.priority);
-
-	if (window != NULL)
-		GetWindowThreadProcessId(window, &ctx->next_process_id);
-	else
-		ctx->next_process_id = 0;
-
-exit:
-	LeaveCriticalSection(&ctx->config_section);
-	audio_capture_worker_recapture(ctx);
-}
-
-static void audio_capture_worker_forward(audio_capture_context_t *ctx)
-{
-	static uint8_t data[HELPER_DATA_SIZE];
-
-	if (InterlockedCompareExchange(&ctx->data->lock, 1, 0) != 0) {
-		warn("failed to acquire data lock, dropping");
-		return;
-	}
-
-	for (int i = 0; i < ctx->data->data_size; ++i)
-		data[i] = ctx->data->data[i];
-
-	struct obs_source_audio audio = {
-		.data[0] = data,
-		.frames = ctx->data->audio.frames,
-
-		.speakers = ctx->data->audio.speakers,
-		.format = ctx->data->audio.format,
-		.samples_per_sec = ctx->data->audio.samples_per_sec,
-
-		.timestamp = ctx->data->audio.timestamp};
-
-	InterlockedExchange(&ctx->data->lock, 0);
-
-	obs_source_output_audio(ctx->source, &audio);
-}
-
-static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
-				      int event_id)
-{
-	bool shutdown = false;
-
-	switch (event_id) {
-	case HELPER_EVENT_DATA:
-		audio_capture_worker_forward(ctx);
-		break;
-
-	case EVENT_SHUTDOWN:
-		debug("shutting down");
-
-		stop_capture(ctx);
-		shutdown = true;
-
-		break;
-
-	case EVENT_UPDATE:
-		audio_capture_worker_update(ctx);
-		break;
-
-	case EVENT_PROCESS_TARGET:
-		debug("target process died");
-
-		safe_close_handle(&ctx->process);
-		ctx->process_id = 0;
-
-		audio_capture_worker_update(ctx);
-		break;
-
-	case EVENT_PROCESS_HELPER:
-		DWORD code;
-		bool success = GetExitCodeProcess(ctx->helper_process, &code);
-		if (success)
-			warn("helper died with exit code: %lu", code);
-		else
-			warn("helper died and failed to get exit code");
-
-		set_update_timer(ctx, RECAPTURE_INTERVAL_ERROR);
-		break;
-
-	default:
-		error("unexpected event id");
-
-		stop_capture(ctx);
-		shutdown = true;
-
-		break;
-	}
-
-	return shutdown;
-}
-
 static void destroy_data(audio_capture_context_t *ctx)
 {
 	if (ctx->data != NULL) {
@@ -343,7 +155,6 @@ static void destroy_helper_events(audio_capture_context_t *ctx)
 
 static bool init_helper_events(audio_capture_context_t *ctx)
 {
-
 	for (int i = HELPER_WO_EVENTS_START; i < HELPER_EVENTS_END; ++i) {
 		wchar_t name[MAX_PATH];
 		format_name_tag(name, event_names[i], ctx->tag);
@@ -358,51 +169,265 @@ static bool init_helper_events(audio_capture_context_t *ctx)
 	return true;
 }
 
-static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
+static void start_capture(audio_capture_context_t *ctx)
 {
-	audio_capture_context_t *ctx = lpParam;
-	int ret = 0;
-
 	ctx->tag = bzalloc(MAX_PATH * sizeof(char));
-	format_tag(ctx->tag);
+	format_tag(ctx->tag, ctx->process_id);
 
 	debug("tag is: %s", ctx->tag);
 
 	if (!init_helper_events(ctx)) {
 		error("failed to init helper events");
-		ret = 1;
-		goto exit;
+		return;
 	}
 
 	if (!init_data(ctx)) {
 		error("failed to init shmem data");
-		ret = 1;
+		return;
+	}
+
+	char *helper_path = obs_module_file("audio-capture-helper.exe");
+	if (!check_file_integrity(ctx, helper_path, "helper"))
+		return;
+
+	wchar_t *helper_path_w;
+	os_utf8_to_wcs_ptr(helper_path, 0, &helper_path_w);
+
+	wchar_t *command_line_w = bzalloc(4096 * sizeof(wchar_t));
+	swprintf(command_line_w, 4096, L"\"%s\" %lu %S %S", helper_path_w,
+		 ctx->process_id,
+		 ctx->exclude_process_tree ? "exclude" : "include", ctx->tag);
+
+	STARTUPINFOW startup_info = {0};
+	PROCESS_INFORMATION process_info = {0};
+
+	startup_info.cb = sizeof(startup_info);
+
+	debug("launching helper with command line: %ls", command_line_w);
+	bool success = CreateProcessW(NULL, command_line_w, NULL, NULL, false,
+				      CREATE_NO_WINDOW, NULL, NULL,
+				      &startup_info, &process_info);
+
+	if (success) {
+		safe_close_handle(&process_info.hThread);
+
+		ctx->helper_process_id = process_info.dwProcessId;
+		ctx->helper_process = process_info.hProcess;
+	} else {
+		error("failed to create helper process");
+	}
+
+	ctx->process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
+				    false, ctx->process_id);
+
+	if (ctx->process == NULL)
+		warn("failed to open target process, can't detect termination");
+
+	bfree(command_line_w);
+	bfree(helper_path_w);
+}
+
+static void stop_capture(audio_capture_context_t *ctx)
+{
+	if (ctx->helper_process_id != 0) {
+		SetEvent(ctx->events[HELPER_WO_EVENT_SHUTDOWN]);
+		WaitForSingleObject(ctx->helper_process, INFINITE);
+
+		ResetEvent(ctx->events[HELPER_WO_EVENT_SHUTDOWN]);
+	}
+
+	ctx->helper_process_id = 0;
+	safe_close_handle(&ctx->helper_process);
+	safe_close_handle(&ctx->process);
+
+	destroy_helper_events(ctx);
+	destroy_data(ctx);
+
+	bfree(ctx->tag);
+	ctx->tag = NULL;
+}
+
+static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
+{
+	stop_capture(ctx);
+	ctx->process_id = ctx->next_process_id;
+
+	if (ctx->process_id != 0)
+		start_capture(ctx);
+	else if (ctx->window_selected)
+		set_update_timer(ctx, RECAPTURE_INTERVAL_DEFAULT);
+}
+
+static void audio_capture_worker_update(audio_capture_context_t *ctx)
+{
+	EnterCriticalSection(&ctx->config_section);
+
+	ctx->exclude_process_tree = ctx->config.exclude_process_tree;
+
+	if (ctx->config.mode == MODE_HOTKEY) {
+		if (ctx->config.hotkey_window != NULL) {
+			ctx->window_selected = true;
+			GetWindowThreadProcessId(ctx->config.hotkey_window,
+						 &ctx->next_process_id);
+		} else {
+			ctx->window_selected = false;
+			ctx->next_process_id = 0;
+		}
+
 		goto exit;
 	}
 
-	int num_perm_events = NUM_HELPER_EVENTS + NUM_EVENTS;
-	HANDLE *events = bzalloc((2 + num_perm_events) * sizeof(HANDLE));
-	for (int i = 0; i < num_perm_events; ++i)
-		events[i] = ctx->events[HELPER_EVENTS_START + i];
+	if (ctx->config.window_info.title == NULL) {
+		ctx->next_process_id = 0;
+		ctx->window_selected = false;
+
+		goto exit;
+	}
+
+	ctx->window_selected = true;
+	HWND window = window_info_get_window(&ctx->config.window_info,
+					     ctx->config.priority);
+
+	if (window != NULL)
+		GetWindowThreadProcessId(window, &ctx->next_process_id);
+	else
+		ctx->next_process_id = 0;
+
+	if (ctx->next_process_id != 0) {
+		debug("resolved window: \"%s\" \"%s\" \"%s\" to PID %lu",
+		      ctx->config.window_info.title,
+		      ctx->config.window_info.class,
+		      ctx->config.window_info.executable, ctx->next_process_id);
+	}
+
+exit:
+	LeaveCriticalSection(&ctx->config_section);
+	audio_capture_worker_recapture(ctx);
+}
+
+static void audio_capture_worker_forward(audio_capture_context_t *ctx)
+{
+	static uint8_t data[HELPER_DATA_SIZE];
+
+	if (InterlockedCompareExchange(&ctx->data->lock, 1, 0) != 0) {
+		warn("failed to acquire data lock, dropping");
+		return;
+	}
+
+	for (int packet = 0; packet < ctx->data->num_packets; ++packet) {
+		struct obs_source_audio audio = {
+			.data[0] = (uint8_t*)ctx->data->data[packet],
+			.frames = ctx->data->frames[packet],
+
+			.speakers = ctx->data->speakers,
+			.format = ctx->data->format,
+			.samples_per_sec = ctx->data->samples_per_sec,
+
+			.timestamp = ctx->data->timestamp[packet]};
+
+		if (audio.format == AUDIO_FORMAT_UNKNOWN)
+			warn("unknown audio format");
+
+		if (audio.speakers == SPEAKERS_UNKNOWN)
+			warn("unknown audio channel configuration");
+
+		obs_source_output_audio(ctx->source, &audio);
+	}
+
+	ctx->data->num_packets = 0;
+	InterlockedExchange(&ctx->data->lock, 0);
+}
+
+static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
+				      int event_id)
+{
+	bool shutdown = false;
+
+	switch (event_id) {
+	case HELPER_EVENT_DATA:
+		audio_capture_worker_forward(ctx);
+		break;
+
+	case EVENT_SHUTDOWN:
+		debug("shutting down");
+
+		stop_capture(ctx);
+		shutdown = true;
+
+		break;
+
+	case EVENT_UPDATE:
+		audio_capture_worker_update(ctx);
+		break;
+
+	case EVENT_PROCESS_TARGET:
+		debug("target process died");
+
+		safe_close_handle(&ctx->process);
+		ctx->process_id = 0;
+
+		audio_capture_worker_update(ctx);
+		break;
+
+	case EVENT_PROCESS_HELPER:
+		DWORD code;
+		bool success = GetExitCodeProcess(ctx->helper_process, &code);
+		if (success)
+			warn("helper died with exit code: %lu", code);
+		else
+			warn("helper died and failed to get exit code");
+
+		safe_close_handle(&ctx->helper_process);
+		ctx->helper_process_id = 0;
+
+		set_update_timer(ctx, RECAPTURE_INTERVAL_ERROR);
+		break;
+
+	default:
+		error("unexpected event id");
+
+		stop_capture(ctx);
+		shutdown = true;
+
+		break;
+	}
+
+	return shutdown;
+}
+
+static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
+{
+	audio_capture_context_t *ctx = lpParam;
+
+	HANDLE *events = bzalloc((2 + NUM_EVENTS_TOTAL) * sizeof(HANDLE));
 
 	bool shutdown = false;
 	while (!shutdown) {
+		for (int i = 0; i < NUM_EVENTS_TOTAL; ++i)
+			events[i] = ctx->events[i];
+
 		int num_proc_events = 0;
 		if (ctx->process != NULL) {
-			events[num_perm_events + num_proc_events] =
+			events[NUM_EVENTS_TOTAL + num_proc_events] =
 				ctx->process;
 			num_proc_events++;
 		}
 
 		if (ctx->helper_process != NULL) {
-			events[num_perm_events + num_proc_events] =
+			events[NUM_EVENTS_TOTAL + num_proc_events] =
 				ctx->helper_process;
 			num_proc_events++;
 		}
 
-		int num_events = num_perm_events + num_proc_events;
-		DWORD event_id = WaitForMultipleObjects(num_events, events,
-							FALSE, INFINITE);
+		int num_events = NUM_EVENTS + num_proc_events;
+		int events_start = EVENTS_START;
+		if (events[HELPER_EVENTS_START] != NULL) {
+			num_events += NUM_HELPER_EVENTS;
+			events_start = HELPER_EVENTS_START;
+		}
+
+		DWORD event_id = WaitForMultipleObjects(
+			num_events, &events[events_start], FALSE, INFINITE);
 
 		if (!(event_id >= WAIT_OBJECT_0 &&
 		      event_id < WAIT_OBJECT_0 + num_events)) {
@@ -410,7 +435,7 @@ static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
 			return 1;
 		}
 
-		event_id += HELPER_EVENTS_START - WAIT_OBJECT_0;
+		event_id += events_start - WAIT_OBJECT_0;
 
 		// TODO make this less awkward?
 		if (num_proc_events == 1 && event_id == EVENT_PROCESS_TARGET &&
@@ -420,10 +445,8 @@ static DWORD WINAPI audio_capture_worker_thread(LPVOID lpParam)
 		shutdown = audio_capture_worker_tick(ctx, event_id);
 	}
 
-exit:
-	destroy_helper_events(ctx);
-	destroy_data(ctx);
-	return ret;
+	bfree(events);
+	return 0;
 }
 
 static void audio_capture_update(void *data, obs_data_t *settings)
@@ -434,8 +457,8 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	audio_capture_config_t new_config = {
 		.mode = obs_data_get_int(settings, SETTING_MODE),
 		.priority = obs_data_get_int(settings, SETTING_WINDOW_PRIORITY),
-		.include_process_tree = obs_data_get_bool(
-			settings, SETTING_INCLUDE_PROCESS_TREE),
+		.exclude_process_tree = obs_data_get_bool(
+			settings, SETTING_EXCLUDE_PROCESS_TREE),
 		.retry_interval = recapture_rate_to_float(
 			obs_data_get_int(settings, SETTING_RECAPTURE_RATE)),
 	};
@@ -468,10 +491,10 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 		need_update = true;
 	}
 
-	if (ctx->config.include_process_tree !=
-	    new_config.include_process_tree) {
-		ctx->config.include_process_tree =
-			new_config.include_process_tree;
+	if (ctx->config.exclude_process_tree !=
+	    new_config.exclude_process_tree) {
+		ctx->config.exclude_process_tree =
+			new_config.exclude_process_tree;
 		need_update = true;
 	}
 
@@ -543,7 +566,7 @@ static void audio_capture_destroy(void *data)
 	}
 
 	safe_close_handle(&ctx->worker_thread);
-	
+
 	if (ctx->timer != NULL)
 		DeleteTimerQueueTimer(ctx->timer_queue, ctx->timer, NULL);
 
@@ -561,7 +584,6 @@ static void audio_capture_destroy(void *data)
 	DeleteCriticalSection(&ctx->config_section);
 	DeleteCriticalSection(&ctx->timer_section);
 
-	bfree(ctx->tag);
 	bfree(ctx);
 }
 
@@ -728,9 +750,9 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_list_add_int(p, TEXT_WINDOW_PRIORITY_EXE,
 				  WINDOW_PRIORITY_EXE);
 
-	// Include process tree setting
-	p = obs_properties_add_bool(ps, SETTING_INCLUDE_PROCESS_TREE,
-				    TEXT_INCLUDE_PROCESS_TREE);
+	// Exclude process tree setting
+	p = obs_properties_add_bool(ps, SETTING_EXCLUDE_PROCESS_TREE,
+				    TEXT_EXCLUDE_PROCESS_TREE);
 
 	// Recapture rate setting
 	p = obs_properties_add_list(ps, SETTING_RECAPTURE_RATE,
@@ -755,7 +777,8 @@ static void audio_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, SETTING_WINDOW, "");
 	obs_data_set_default_int(settings, SETTING_WINDOW_PRIORITY,
 				 WINDOW_PRIORITY_EXE);
-	obs_data_set_default_bool(settings, SETTING_INCLUDE_PROCESS_TREE, true);
+	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE,
+				  false);
 	obs_data_set_default_int(settings, SETTING_RECAPTURE_RATE,
 				 RECAPTURE_RATE_NORMAL);
 }
