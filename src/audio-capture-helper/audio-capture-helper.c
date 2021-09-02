@@ -196,6 +196,8 @@ exit:
 
 static WAVEFORMATEX *setup_audio_client(IAudioClient *client, HANDLE event)
 {
+	HRESULT hr = E_FAIL;
+
 	WAVEFORMATEX *format = get_default_mix_format();
 	if (format == NULL) {
 		error("failed to get default render mix format");
@@ -203,11 +205,13 @@ static WAVEFORMATEX *setup_audio_client(IAudioClient *client, HANDLE event)
 		return NULL;
 	}
 
-	HRESULT hr = E_FAIL;
+	info("format pre-init: ch:%d bps:%lu nbl:%d tag:%d", format->nChannels,
+	     format->nAvgBytesPerSec, format->nBlockAlign, format->wFormatTag);
+
 	hr = CALL(client, Initialize, AUDCLNT_SHAREMODE_SHARED,
 		  AUDCLNT_STREAMFLAGS_LOOPBACK |
 			  AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-		  0, 0, format, NULL);
+		  5 * 10000000, 0, format, NULL);
 	if (FAILED(hr)) {
 		error("failed to initialize audio client (0x%lx)", hr);
 		SAFE_RELEASE(client);
@@ -405,19 +409,27 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 	ctx->data->audio.frames = 0;
 	ctx->data->data_size = 0;
 
-	size_t frame_size =
+	size_t frame_size_packed =
 		(ctx->format->wBitsPerSample * ctx->format->nChannels) /
 		CHAR_BIT;
 
-	// Real number obtained from first GetBuffer
-	UINT32 num_frames = 1;
+	size_t frame_size = ctx->format->nBlockAlign;
+
+	UINT32 num_frames;
+	UINT32 num_frames_gb;
+
+	hr = CALL(ctx->capture_client, GetNextPacketSize, &num_frames);
+	if (FAILED(hr)) {
+		warn("capture client getnextpacketsize failed");
+		num_frames = 0;
+	}
 
 	while (num_frames > 0) {
 		BYTE *data;
 		DWORD flags;
 		UINT64 qpc_position;
 
-		hr = CALL(ctx->capture_client, GetBuffer, &data, &num_frames,
+		hr = CALL(ctx->capture_client, GetBuffer, &data, &num_frames_gb,
 			  &flags, NULL, &qpc_position);
 		if (FAILED(hr)) {
 			warn("capture client getbuffer failed");
@@ -429,16 +441,31 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 		if (ctx->data->audio.frames == 0)
 			ctx->data->audio.timestamp = qpc_position * 100;
 
+		size_t packet_size_packed = frame_size_packed * num_frames;
 		size_t packet_size = frame_size * num_frames;
 		size_t data_start = ctx->data->data_size;
 
-		for (size_t i = 0; i < packet_size; ++i) {
-			ctx->data->data[data_start + i] =
-				flags & AUDCLNT_BUFFERFLAGS_SILENT ? 0
-								   : data[i];
+		if (flags & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR |
+			     AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)) {
+			hr = CALL(ctx->capture_client, ReleaseBuffer,
+				  num_frames);
+			if (FAILED(hr))
+				warn("capture client releasebuffer failed");
+			goto exit;
 		}
 
-		ctx->data->data_size += packet_size;
+		bool silent = flags & AUDCLNT_BUFFERFLAGS_SILENT;
+		for (size_t i = 0; i < num_frames; ++i) {
+			size_t pos = i * frame_size;
+			size_t pos_packed = i * frame_size_packed;
+
+			for (size_t j = 0; j < frame_size_packed; ++j) {
+				ctx->data->data[data_start + pos_packed + j] =
+					silent ? 0 : data[pos + j];
+			}
+		}
+
+		ctx->data->data_size += packet_size_packed;
 		ctx->data->audio.frames += num_frames;
 
 		hr = CALL(ctx->capture_client, ReleaseBuffer, num_frames);
@@ -452,6 +479,7 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 		}
 	}
 
+exit:
 	InterlockedExchange(&ctx->data->lock, 0);
 	SetEvent(ctx->events[HELPER_EVENT_DATA]);
 
