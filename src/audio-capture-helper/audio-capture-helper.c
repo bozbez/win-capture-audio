@@ -294,13 +294,10 @@ static bool init_helper_data(audio_capture_helper_context_t *ctx)
 		return false;
 	}
 
-	ctx->data->audio.data[0] = (uint8_t *)ctx->data->data;
-
-	ctx->data->audio.speakers =
+	ctx->data->speakers =
 		get_obs_speaker_layout((WAVEFORMATEXTENSIBLE *)ctx->format);
-	ctx->data->audio.format =
-		get_obs_format((WAVEFORMATEXTENSIBLE *)ctx->format);
-	ctx->data->audio.samples_per_sec = ctx->format->nSamplesPerSec;
+	ctx->data->format = get_obs_format((WAVEFORMATEXTENSIBLE *)ctx->format);
+	ctx->data->samples_per_sec = ctx->format->nSamplesPerSec;
 
 	return true;
 }
@@ -406,18 +403,12 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 
 	HRESULT hr;
 
-	ctx->data->audio.frames = 0;
-	ctx->data->data_size = 0;
-
+	size_t frame_size = ctx->format->nBlockAlign;
 	size_t frame_size_packed =
 		(ctx->format->wBitsPerSample * ctx->format->nChannels) /
 		CHAR_BIT;
 
-	size_t frame_size = ctx->format->nBlockAlign;
-
-	UINT32 num_frames;
-	UINT32 num_frames_gb;
-
+	UINT32 num_frames = 0;
 	hr = CALL(ctx->capture_client, GetNextPacketSize, &num_frames);
 	if (FAILED(hr)) {
 		warn("capture client getnextpacketsize failed");
@@ -429,7 +420,7 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 		DWORD flags;
 		UINT64 qpc_position;
 
-		hr = CALL(ctx->capture_client, GetBuffer, &data, &num_frames_gb,
+		hr = CALL(ctx->capture_client, GetBuffer, &data, &num_frames,
 			  &flags, NULL, &qpc_position);
 		if (FAILED(hr)) {
 			warn("capture client getbuffer failed");
@@ -437,22 +428,8 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 			return false;
 		}
 
-		// Set timestamp only on first GetBuffer
-		if (ctx->data->audio.frames == 0)
-			ctx->data->audio.timestamp = qpc_position * 100;
-
-		size_t packet_size_packed = frame_size_packed * num_frames;
-		size_t packet_size = frame_size * num_frames;
-		size_t data_start = ctx->data->data_size;
-
-		if (flags & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR |
-			     AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)) {
-			hr = CALL(ctx->capture_client, ReleaseBuffer,
-				  num_frames);
-			if (FAILED(hr))
-				warn("capture client releasebuffer failed");
-			goto exit;
-		}
+		int cur_packet = ctx->data->num_packets++;
+		ctx->data->timestamp[cur_packet] = qpc_position * 100;
 
 		bool silent = flags & AUDCLNT_BUFFERFLAGS_SILENT;
 		for (size_t i = 0; i < num_frames; ++i) {
@@ -460,13 +437,14 @@ static bool forward_audio_packet(audio_capture_helper_context_t *ctx)
 			size_t pos_packed = i * frame_size_packed;
 
 			for (size_t j = 0; j < frame_size_packed; ++j) {
-				ctx->data->data[data_start + pos_packed + j] =
+				ctx->data->data[cur_packet][pos_packed + j] =
 					silent ? 0 : data[pos + j];
 			}
 		}
 
-		ctx->data->data_size += packet_size_packed;
-		ctx->data->audio.frames += num_frames;
+		ctx->data->data_size[cur_packet] =
+			frame_size_packed * num_frames;
+		ctx->data->frames[cur_packet] = num_frames;
 
 		hr = CALL(ctx->capture_client, ReleaseBuffer, num_frames);
 		if (FAILED(hr))

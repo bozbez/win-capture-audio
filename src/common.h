@@ -1,5 +1,6 @@
 #pragma once
 
+#include <media-io/audio-io.h>
 #include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -13,7 +14,8 @@
 		(punk) = NULL;         \
 	}
 
-#define HELPER_DATA_SIZE (1024 * 1024 * 1024)
+#define HELPER_DATA_SIZE (1024 * 1024)
+#define HELPER_MAX_FRAMES 32
 
 #define HELPER_DATA_NAME L"Local\\OBS_ACHelper_Data"
 
@@ -65,10 +67,18 @@ static inline void format_tag(char *buf, DWORD target_pid)
 
 typedef struct audio_capture_helper_data {
 	long lock;
-	struct obs_source_audio audio;
 
-	size_t data_size;
-	uint8_t data[HELPER_DATA_SIZE];
+	enum speaker_layout speakers;
+	enum audio_format format;
+	uint32_t samples_per_sec;
+
+	uint32_t num_packets;
+
+	uint32_t frames[HELPER_MAX_FRAMES];
+	uint64_t timestamp[HELPER_MAX_FRAMES];
+
+	size_t data_size[HELPER_MAX_FRAMES];
+	uint8_t data[HELPER_MAX_FRAMES][HELPER_DATA_SIZE];
 } audio_capture_helper_data_t;
 
 static inline void safe_close_handle(HANDLE *handle)

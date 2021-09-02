@@ -314,28 +314,28 @@ static void audio_capture_worker_forward(audio_capture_context_t *ctx)
 		return;
 	}
 
-	for (int i = 0; i < ctx->data->data_size; ++i)
-		data[i] = ctx->data->data[i];
+	for (int packet = 0; packet < ctx->data->num_packets; ++packet) {
+		struct obs_source_audio audio = {
+			.data[0] = (uint8_t*)ctx->data->data[packet],
+			.frames = ctx->data->frames[packet],
 
-	struct obs_source_audio audio = {
-		.data[0] = data,
-		.frames = ctx->data->audio.frames,
+			.speakers = ctx->data->speakers,
+			.format = ctx->data->format,
+			.samples_per_sec = ctx->data->samples_per_sec,
 
-		.speakers = ctx->data->audio.speakers,
-		.format = ctx->data->audio.format,
-		.samples_per_sec = ctx->data->audio.samples_per_sec,
+			.timestamp = ctx->data->timestamp[packet]};
 
-		.timestamp = ctx->data->audio.timestamp};
+		if (audio.format == AUDIO_FORMAT_UNKNOWN)
+			warn("unknown audio format");
 
+		if (audio.speakers == SPEAKERS_UNKNOWN)
+			warn("unknown audio channel configuration");
+
+		obs_source_output_audio(ctx->source, &audio);
+	}
+
+	ctx->data->num_packets = 0;
 	InterlockedExchange(&ctx->data->lock, 0);
-
-	if (audio.format == AUDIO_FORMAT_UNKNOWN)
-		warn("unknown audio format");
-
-	if (audio.speakers == SPEAKERS_UNKNOWN)
-		warn("unknown audio channel configuration");
-
-	obs_source_output_audio(ctx->source, &audio);
 }
 
 static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
