@@ -42,7 +42,7 @@ void set_update_timer(audio_capture_context_t *ctx, float interval)
 		ctx->timer = NULL;
 	}
 
-	debug("setting timer for %ld millis", time_millis);
+	// debug("setting timer for %ld millis", time_millis);
 	CreateTimerQueueTimer(&ctx->timer, ctx->timer_queue, set_update, ctx,
 			      time_millis, 0, WT_EXECUTEINTIMERTHREAD);
 
