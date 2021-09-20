@@ -113,6 +113,20 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 	return open_process_proc(desired_access, inherit_handle, process_id);
 }
 
+static inline bool process_is_alive(DWORD pid)
+{
+	HANDLE process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
+				      false, pid);
+	if (process == NULL)
+		return false;
+
+	DWORD code;
+	bool success = GetExitCodeProcess(process, &code);
+
+	safe_close_handle(&process);
+	return success && code == STILL_ACTIVE;
+}
+
 static void destroy_data(audio_capture_context_t *ctx)
 {
 	if (ctx->data != NULL) {
@@ -265,11 +279,19 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 	ctx->exclude_process_tree = ctx->config.exclude_process_tree;
 
 	if (ctx->config.mode == MODE_HOTKEY) {
-		if (ctx->config.hotkey_window != NULL) {
-			ctx->window_selected = true;
-			GetWindowThreadProcessId(ctx->config.hotkey_window,
-						 &ctx->next_process_id);
-		} else {
+		if (ctx->config.hotkey_window == NULL) {
+			ctx->window_selected = false;
+			ctx->next_process_id = 0;
+			goto exit;
+		}
+
+		ctx->window_selected = true;
+		GetWindowThreadProcessId(ctx->config.hotkey_window,
+					 &ctx->next_process_id);
+
+		if (!process_is_alive(ctx->next_process_id)) {
+			ctx->config.hotkey_window = NULL;
+
 			ctx->window_selected = false;
 			ctx->next_process_id = 0;
 		}
@@ -316,7 +338,7 @@ static void audio_capture_worker_forward(audio_capture_context_t *ctx)
 
 	for (int packet = 0; packet < ctx->data->num_packets; ++packet) {
 		struct obs_source_audio audio = {
-			.data[0] = (uint8_t*)ctx->data->data[packet],
+			.data[0] = (uint8_t *)ctx->data->data[packet],
 			.frames = ctx->data->frames[packet],
 
 			.speakers = ctx->data->speakers,
@@ -521,8 +543,11 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 	EnterCriticalSection(&ctx->config_section);
 	if (pressed && ctx->config.mode == MODE_HOTKEY) {
 		debug("activate hotkey pressed");
-		ctx->config.hotkey_window = GetForegroundWindow();
-		needs_update = true;
+		HWND new_window = GetForegroundWindow();
+		if (ctx->config.hotkey_window != new_window) {
+			ctx->config.hotkey_window = new_window;
+			needs_update = true;
+		}
 	}
 	LeaveCriticalSection(&ctx->config_section);
 
@@ -545,6 +570,7 @@ static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey,
 	if (pressed && ctx->config.mode == MODE_HOTKEY) {
 		debug("deactivate hotkey pressed");
 		ctx->config.hotkey_window = NULL;
+		needs_update = true;
 	}
 	LeaveCriticalSection(&ctx->config_section);
 
