@@ -786,7 +786,7 @@ static void audio_capture_defaults(obs_data_t *settings)
 static const char *audio_capture_get_name(void *type_data)
 {
 	UNUSED_PARAMETER(type_data);
-	return "Application Audio Output Capture";
+	return TEXT_NAME;
 }
 
 struct obs_source_info audio_capture_info = {

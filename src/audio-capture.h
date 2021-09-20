@@ -51,6 +51,8 @@ inline static void do_log_source(const obs_source_t *source, int level,
 
 #define SETTING_RECAPTURE_RATE         "recapture_rate"
 
+#define TEXT_NAME                      obs_module_text("Name")
+
 #define TEXT_MODE                      obs_module_text("Mode")
 #define TEXT_MODE_WINDOW               obs_module_text("Mode.Window")
 #define TEXT_MODE_HOTKEY               obs_module_text("Mode.Hotkey")
