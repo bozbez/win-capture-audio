@@ -299,8 +299,6 @@ bool get_window_exe(struct dstr *name, HWND window)
 	DWORD id;
 
 	GetWindowThreadProcessId(window, &id);
-	if (id == GetCurrentProcessId())
-		return false;
 
 	process = open_process(PROCESS_QUERY_LIMITED_INFORMATION, false, id);
 	if (!process)
