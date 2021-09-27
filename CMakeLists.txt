@@ -15,7 +15,6 @@ configure_file(
     ../installer/installer.generated.iss
 )
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 find_package(LibObs REQUIRED)
 
 set(win-capture-audio_SOURCES

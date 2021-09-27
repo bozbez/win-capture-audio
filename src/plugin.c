@@ -1,11 +1,4 @@
-#include <wchar.h>
-
 #include <obs-module.h>
-#include <util/config-file.h>
-#include <util/dstr.h>
-
-#include "util/base.h"
-#include "util/pipe.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("win-capture-audio", "en-GB")

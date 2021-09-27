@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <audioclient.h>
 
+#include <wil/com.h>
+
 #include "../common.h"
 
 #define do_log(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
@@ -26,14 +28,14 @@ typedef struct capture_options {
 typedef struct audio_capture_helper_context {
 	capture_options_t options;
 
-	IAudioClient *client;
-	IAudioCaptureClient *capture_client;
+	wil::com_ptr<IAudioClient> client;
+	wil::com_ptr<IAudioCaptureClient> capture_client;
 
-	WAVEFORMATEX *format;
-	HANDLE event_data;
+	wil::unique_cotaskmem_ptr<WAVEFORMATEX> format;
+	
+	wil::unique_event event_data;
+	wil::unique_event events[NUM_HELPER_EVENTS_TOTAL];
 
-	HANDLE events[NUM_HELPER_EVENTS_TOTAL];
-
-	HANDLE data_map;
-	volatile audio_capture_helper_data_t *data;
+	wil::unique_handle data_map;
+	wil::unique_mapview_ptr<audio_capture_helper_data_t> data;
 } audio_capture_helper_context_t;
