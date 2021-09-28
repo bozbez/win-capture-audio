@@ -6,11 +6,6 @@
 #include <vector>
 #include <stdexcept>
 
-#include <audiopolicy.h>
-#include <mmdeviceapi.h>
-
-#include <wrl/implements.h>
-#include <wil/com.h>
 #include <wil/result.h>
 
 #include "../common.h"
@@ -19,34 +14,7 @@
 #include "format-conversion.hpp"
 #include "wil/result_macros.h"
 
-using namespace Microsoft::WRL;
-
-struct CompletionHandler
-	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
-			      IActivateAudioInterfaceCompletionHandler> {
-	wil::com_ptr<IAudioClient> client;
-
-	HRESULT activate_hr = E_FAIL;
-	wil::unique_event event_finished;
-
-	CompletionHandler() { event_finished.create(); }
-
-	STDMETHOD(ActivateCompleted)
-	(IActivateAudioInterfaceAsyncOperation *operation)
-	{
-		auto set_finished = event_finished.SetEvent_scope_exit();
-
-		RETURN_IF_FAILED(operation->GetActivateResult(
-			&activate_hr, client.put_unknown()));
-
-		if (FAILED(activate_hr))
-			error("activate failed (0x%lx)", activate_hr);
-
-		return S_OK;
-	}
-};
-
-AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::get_params()
+AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
 {
 	auto mode = options.include_tree
 			    ? PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
@@ -63,7 +31,7 @@ AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::get_params()
 }
 
 PROPVARIANT
-AudioCaptureHelper::get_propvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params)
+AudioCaptureHelper::GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params)
 {
 	return {
 		.vt = VT_BLOB,
@@ -75,7 +43,7 @@ AudioCaptureHelper::get_propvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params)
 	};
 }
 
-void AudioCaptureHelper::init_format()
+void AudioCaptureHelper::InitFormat()
 {
 	auto enumerator =
 		wil::CoCreateInstance<MMDeviceEnumerator, IMMDeviceEnumerator>();
@@ -93,10 +61,10 @@ void AudioCaptureHelper::init_format()
 	     format->nAvgBytesPerSec, format->nBlockAlign, format->wFormatTag);
 }
 
-void AudioCaptureHelper::init_client()
+void AudioCaptureHelper::InitClient()
 {
-	auto params = get_params();
-	auto propvariant = get_propvariant(&params);
+	auto params = GetParams();
+	auto propvariant = GetPropvariant(&params);
 
 	wil::com_ptr<IActivateAudioInterfaceAsyncOperation> async_op;
 	CompletionHandler completion_handler;
@@ -117,9 +85,13 @@ void AudioCaptureHelper::init_client()
 
 	event_data.create();
 	client->SetEventHandle(event_data.get());
+
+	wchar_t name[MAX_PATH];
+	format_name_tag(name, HELPER_EVENT_DATA_NAME, options.tag);
+	event_data_forward.open(name);
 }
 
-void AudioCaptureHelper::init_data()
+void AudioCaptureHelper::InitData()
 {
 	wchar_t name[MAX_PATH];
 	format_name_tag(name, HELPER_DATA_NAME, options.tag);
@@ -149,35 +121,41 @@ void AudioCaptureHelper::init_data()
 	data->samples_per_sec = format->nSamplesPerSec;
 }
 
-void AudioCaptureHelper::init_events()
+void AudioCaptureHelper::InitCapture()
 {
-	for (int i = 0; i < NUM_HELPER_EVENTS_TOTAL; ++i) {
-		wchar_t name[MAX_PATH];
-		format_name_tag(name, event_names[i], options.tag);
-
-		events[i].open(name);
-	}
-}
-
-void AudioCaptureHelper::init_capture()
-{
-	init_format();
-	init_client();
+	InitFormat();
+	InitClient();
 
 	client->GetService(__uuidof(IAudioCaptureClient),
 			   capture_client.put_void());
+
+	THROW_IF_FAILED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
+
+	DWORD task_id = 0;
+	THROW_IF_FAILED(
+		MFLockSharedWorkQueue(L"Capture", 0, &task_id, &queue_id));
+	callback_packet_ready.SetQueueId(queue_id);
+
+	THROW_IF_FAILED(MFCreateAsyncResult(nullptr, &callback_packet_ready,
+					    nullptr, &packet_ready_result));
 }
 
-void AudioCaptureHelper::forward_audio_packet()
+HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
 {
+	auto requeue_callback = wil::scope_exit([&]() {
+		MFPutWaitingWorkItem(event_data.get(), 0,
+				     packet_ready_result.get(),
+				     &packet_ready_key);
+	});
+
 	if (InterlockedCompareExchange(&data->lock, 1, 0) != 0) {
 		warn("failed to acquire data lock");
-		return;
+		return S_OK;
 	}
 
-	auto cleanup = wil::scope_exit([&]() {
+	auto unlock_and_forward = wil::scope_exit([&]() {
 		InterlockedExchange(&data->lock, 0);
-		events[HELPER_EVENT_DATA].SetEvent();
+		event_data_forward.SetEvent();
 	});
 
 	size_t frame_size = format->nBlockAlign;
@@ -215,54 +193,23 @@ void AudioCaptureHelper::forward_audio_packet()
 		capture_client->ReleaseBuffer(num_frames);
 		capture_client->GetNextPacketSize(&num_frames);
 	}
+
+	return S_OK;
 }
 
-bool AudioCaptureHelper::tick(int event_id)
+void AudioCaptureHelper::Start()
 {
-	switch (event_id) {
-	case HELPER_WO_EVENT_SHUTDOWN:
-		info("shutting down");
-		return true;
-	case NUM_HELPER_WO_EVENTS: // event_data
-		forward_audio_packet();
-		return false;
-	default:
-		error("unexpected event id: %d", event_id);
-		return true;
-	}
-
-	return false;
-}
-
-void AudioCaptureHelper::run()
-{
-	int num_events = 1 + NUM_HELPER_WO_EVENTS;
-
-	std::vector<HANDLE> wait_events;
-	for (int i = 0; i < NUM_HELPER_WO_EVENTS; ++i)
-		wait_events.push_back(events[i].get());
-
-	wait_events.push_back(event_data.get());
+	THROW_IF_FAILED(MFPutWaitingWorkItem(event_data.get(), 0,
+					     packet_ready_result.get(),
+					     &packet_ready_key));
 
 	client->Start();
+}
 
-	bool shutdown = false;
-	while (!shutdown) {
-		int event_id = WaitForMultipleObjects(
-			num_events, wait_events.data(), false, INFINITE);
-
-		if (!(event_id >= WAIT_OBJECT_0 &&
-		      event_id < WAIT_OBJECT_0 + num_events)) {
-			error("error waiting for events");
-			shutdown = true;
-
-			break;
-		}
-
-		shutdown = tick(event_id);
-	}
-
+void AudioCaptureHelper::Stop()
+{
 	client->Stop();
+	THROW_IF_FAILED(MFCancelWorkItem(packet_ready_key));
 }
 
 CaptureOptions::CaptureOptions(int argc, char *argv[])
@@ -286,6 +233,21 @@ CaptureOptions::CaptureOptions(int argc, char *argv[])
 		throw std::runtime_error("failed to parse tag");
 }
 
+void run(CaptureOptions options)
+{
+	wchar_t name[MAX_PATH];
+	format_name_tag(name, HELPER_WO_EVENT_SHUTDOWN_NAME, options.tag);
+
+	wil::unique_event event_shutdown;
+	event_shutdown.open(name);
+
+	AudioCaptureHelper helper(options);
+
+	helper.Start();
+	event_shutdown.wait();
+	helper.Stop();
+}
+
 int main(int argc, char *argv[])
 {
 	HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -295,10 +257,7 @@ int main(int argc, char *argv[])
 	}
 
 	try {
-		CaptureOptions options(argc, argv);
-		AudioCaptureHelper helper(options);
-
-		helper.run();
+		run(CaptureOptions(argc, argv));
 	} catch (wil::ResultException err) {
 		error("%s", err.what());
 		return err.GetErrorCode();
