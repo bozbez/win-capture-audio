@@ -16,27 +16,7 @@
 #include <wrl/implements.h>
 #include <wil/com.h>
 
-#include "../common.h"
-
-#define do_log(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
-
-#define error(format, ...) \
-	do_log("error: (%s): " format "\n", __func__, ##__VA_ARGS__)
-#define warn(format, ...) \
-	do_log("warn: (%s): " format "\n", __func__, ##__VA_ARGS__)
-#define info(format, ...) \
-	do_log("info: (%s): " format "\n", __func__, ##__VA_ARGS__)
-#define debug(format, ...) \
-	do_log("debug: (%s): " format "\n", __func__, ##__VA_ARGS__)
-
-struct CaptureOptions {
-	DWORD pid;
-	bool include_tree;
-
-	char *tag;
-
-	CaptureOptions(int argc, char *argv[]);
-};
+#include "common.h"
 
 using namespace Microsoft::WRL;
 
@@ -70,8 +50,25 @@ struct AsyncCallbackInvoker : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
 	using func_type = std::function<HRESULT(IMFAsyncResult *)>;
 	func_type func;
 	DWORD queue_id = MFASYNC_CALLBACK_QUEUE_MULTITHREADED;
+	wil::unique_event &shutdown_event;
 
-	AsyncCallbackInvoker(func_type func) : func{func} {}
+	ULONG refcount = 0;
+
+	AsyncCallbackInvoker(func_type func, wil::unique_event &shutdown_event)
+		: func{func}, shutdown_event{shutdown_event}
+	{
+	}
+
+	STDMETHOD_(ULONG, AddRef)() { return ++refcount; }
+	STDMETHOD_(ULONG, Release)()
+	{
+		--refcount;
+
+		if (refcount == 0)
+			shutdown_event.SetEvent();
+
+		return refcount;
+	}
 
 	STDMETHOD(GetParameters)(DWORD *flags, DWORD *queue)
 	{
@@ -85,13 +82,31 @@ struct AsyncCallbackInvoker : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
 	void SetQueueId(DWORD new_queue_id) { queue_id = new_queue_id; }
 };
 
-#define METHODASYNCCALLBACK(invoker, method)                                \
-	AsyncCallbackInvoker invoker{std::bind(&AudioCaptureHelper::method, \
-					       this, std::placeholders::_1)};
+#define METHODASYNCCALLBACK(invoker, method, shutdown_event)                 \
+	AsyncCallbackInvoker invoker{std::bind(&AudioCaptureHelper::method,  \
+					       this, std::placeholders::_1), \
+				     shutdown_event};
+
+namespace wil {
+using unique_mfshutdown_call =
+	wil::unique_call<decltype(&::MFShutdown), ::MFShutdown>;
+
+_Check_return_ inline unique_mfshutdown_call MFStartup(DWORD flags = 0)
+{
+	::MFStartup(MF_VERSION, flags);
+	return unique_mfshutdown_call();
+}
+}
 
 class AudioCaptureHelper {
 private:
-	CaptureOptions options;
+	DWORD pid;
+	bool include_tree;
+
+	obs_source_t *source;
+
+	wil::unique_couninitialize_call couninit{wil::CoInitializeEx()};
+	wil::unique_mfshutdown_call mfshutdown{wil::MFStartup(MFSTARTUP_LITE)};
 
 	wil::com_ptr<IAudioClient> client;
 	wil::com_ptr<IAudioCaptureClient> capture_client;
@@ -99,10 +114,7 @@ private:
 	wil::unique_cotaskmem_ptr<WAVEFORMATEX> format;
 
 	wil::unique_event event_data;
-	wil::unique_event event_data_forward;
-
-	wil::unique_handle data_map;
-	wil::unique_mapview_ptr<audio_capture_helper_data_t> data;
+	wil::unique_event event_result_shutdown;
 
 	DWORD queue_id;
 	wil::com_ptr<IMFAsyncResult> packet_ready_result;
@@ -115,22 +127,13 @@ private:
 	void InitClient();
 
 	void InitCapture();
-	void InitData();
 
 	HRESULT OnPacketReady(IMFAsyncResult *result);
-	bool Tick(int event_id);
 
 public:
-	AudioCaptureHelper(CaptureOptions options) : options{options}
-	{
-		InitCapture();
-		InitData();
-	};
+	AudioCaptureHelper(obs_source_t *source, DWORD pid, bool include_tree);
+	~AudioCaptureHelper();
 
-	~AudioCaptureHelper() { MFUnlockWorkQueue(queue_id); };
-
-	METHODASYNCCALLBACK(callback_packet_ready, OnPacketReady);
-
-	void Start();
-	void Stop();
+	METHODASYNCCALLBACK(callback_packet_ready, OnPacketReady,
+			    event_result_shutdown);
 };

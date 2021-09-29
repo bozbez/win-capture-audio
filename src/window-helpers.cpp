@@ -12,7 +12,7 @@
 extern void window_info_destroy(window_info_t *info)
 {
 	bfree(info->executable);
-	bfree(info->class);
+	bfree(info->cls);
 	bfree(info->title);
 }
 
@@ -25,7 +25,7 @@ extern bool window_info_cmp(window_info_t *info_a, window_info_t *info_b)
 		return true;
 
 	return strcmp(info_a->executable, info_b->executable) ||
-	       strcmp(info_a->class, info_b->class) ||
+	       strcmp(info_a->cls, info_b->cls) ||
 	       strcmp(info_a->title, info_b->title);
 }
 
@@ -132,20 +132,20 @@ static const char *generic_classes[] = {
 
 static bool is_generic_class(const char *current_class)
 {
-	const char **class = generic_class_substrings;
-	while (*class) {
-		if (astrstri(current_class, *class) != NULL)
+	const char **cls = generic_class_substrings;
+	while (*cls) {
+		if (astrstri(current_class, *cls) != NULL)
 			return true;
 
-		class ++;
+		cls++;
 	}
 
-	class = generic_classes;
-	while (*class) {
-		if (astrcmpi(current_class, *class) == 0)
+	cls = generic_classes;
+	while (*cls) {
+		if (astrcmpi(current_class, *cls) == 0)
 			return true;
 
-		class ++;
+		cls++;
 	}
 
 	return false;
@@ -166,7 +166,7 @@ static int window_rating(HWND window, enum window_priority priority,
 	get_window_class(&cur_class, window);
 
 	bool exe_matches = dstr_cmpi(&cur_exe, info->executable) == 0;
-	bool class_matches = dstr_cmpi(&cur_class, info->class) == 0;
+	bool class_matches = dstr_cmpi(&cur_class, info->cls) == 0;
 	int title_val = abs(dstr_cmpi(&cur_title, info->title));
 
 	/* always match by name if class is generic */
@@ -195,9 +195,9 @@ static int window_rating(HWND window, enum window_priority priority,
 extern HWND window_info_get_window(window_info_t *info,
 				   enum window_priority priority)
 {
-	if (strcmp(info->class, "dwm") == 0) {
+	if (strcmp(info->cls, "dwm") == 0) {
 		wchar_t class_w[512];
-		os_utf8_to_wcs(info->class, 0, class_w, 512);
+		os_utf8_to_wcs(info->cls, 0, class_w, 512);
 		return FindWindowW(class_w, NULL);
 	}
 
@@ -209,10 +209,10 @@ extern HWND window_info_get_window(window_info_t *info,
 	HWND best_window = NULL;
 	int best_rating = 0x7FFFFFFF;
 
-	if (!info->class)
+	if (!info->cls)
 		return NULL;
 
-	bool generic_class = is_generic_class(info->class);
+	bool generic_class = is_generic_class(info->cls);
 
 	while (window) {
 		int rating =
@@ -250,7 +250,7 @@ extern void build_window_strings(const char *str, window_info_t *info)
 {
 	char **strlist;
 
-	info->class = NULL;
+	info->cls = NULL;
 	info->title = NULL;
 	info->executable = NULL;
 
@@ -262,7 +262,7 @@ extern void build_window_strings(const char *str, window_info_t *info)
 
 	if (strlist && strlist[0] && strlist[1] && strlist[2]) {
 		info->title = decode_str(strlist[0]);
-		info->class = decode_str(strlist[1]);
+		info->cls = decode_str(strlist[1]);
 		info->executable = decode_str(strlist[2]);
 	}
 
@@ -333,19 +333,19 @@ void get_window_title(struct dstr *name, HWND hwnd)
 	if (!len)
 		return;
 
-	temp = malloc(sizeof(wchar_t) * (len + 1));
+	temp = (wchar_t *)malloc(sizeof(wchar_t) * (len + 1));
 	if (GetWindowTextW(hwnd, temp, len + 1))
 		dstr_from_wcs(name, temp);
 	free(temp);
 }
 
-void get_window_class(struct dstr *class, HWND hwnd)
+void get_window_class(struct dstr *cls, HWND hwnd)
 {
 	wchar_t temp[256];
 
 	temp[0] = 0;
 	if (GetClassNameW(hwnd, temp, sizeof(temp) / sizeof(wchar_t)))
-		dstr_from_wcs(class, temp);
+		dstr_from_wcs(cls, temp);
 }
 
 /* not capturable or internal windows, exact executable names */
@@ -429,7 +429,7 @@ bool is_blacklisted_exe(const char *exe)
 
 static void add_window(obs_property_t *p, HWND hwnd, add_window_cb callback)
 {
-	struct dstr class = {0};
+	struct dstr cls = {0};
 	struct dstr title = {0};
 	struct dstr exe = {0};
 	struct dstr encoded = {0};
@@ -449,11 +449,11 @@ static void add_window(obs_property_t *p, HWND hwnd, add_window_cb callback)
 		return;
 	}
 
-	get_window_class(&class, hwnd);
+	get_window_class(&cls, hwnd);
 
-	if (callback && !callback(title.array, class.array, exe.array)) {
+	if (callback && !callback(title.array, cls.array, exe.array)) {
 		dstr_free(&title);
-		dstr_free(&class);
+		dstr_free(&cls);
 		dstr_free(&exe);
 		return;
 	}
@@ -461,12 +461,12 @@ static void add_window(obs_property_t *p, HWND hwnd, add_window_cb callback)
 	dstr_printf(&desc, "[%s]: %s", exe.array, title.array);
 
 	encode_dstr(&title);
-	encode_dstr(&class);
+	encode_dstr(&cls);
 	encode_dstr(&exe);
 
 	dstr_cat_dstr(&encoded, &title);
 	dstr_cat(&encoded, ":");
-	dstr_cat_dstr(&encoded, &class);
+	dstr_cat_dstr(&encoded, &cls);
 	dstr_cat(&encoded, ":");
 	dstr_cat_dstr(&encoded, &exe);
 
@@ -474,7 +474,7 @@ static void add_window(obs_property_t *p, HWND hwnd, add_window_cb callback)
 
 	dstr_free(&encoded);
 	dstr_free(&desc);
-	dstr_free(&class);
+	dstr_free(&cls);
 	dstr_free(&title);
 	dstr_free(&exe);
 }

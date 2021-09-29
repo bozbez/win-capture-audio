@@ -1,6 +1,8 @@
 #pragma once
 
+#include <optional>
 #include <stdio.h>
+
 #include <windows.h>
 
 #include <obs.h>
@@ -8,37 +10,7 @@
 
 #include "common.h"
 #include "window-helpers.h"
-
-#define do_log(level, format, ...)                                  \
-	do_log_source(ctx->source, level, "(%s) " format, __func__, \
-		      ##__VA_ARGS__)
-
-inline static void do_log_source(const obs_source_t *source, int level,
-				 const char *format, ...)
-{
-	va_list args;
-	va_start(args, format);
-
-	const char *name = obs_source_get_name(source);
-	int len = strlen(name);
-
-	const char *format_source = len <= 8 ? "[audio-capture: '%s'] %s"
-					     : "[audio-capture: '%.8s...'] %s";
-
-	int len_full = strlen(format_source) + 12 + strlen(format);
-	char *format_full = bzalloc(len_full);
-
-	snprintf(format_full, len_full, format_source, name, format);
-	blogva(level, format_full, args);
-
-	bfree(format_full);
-	va_end(args);
-}
-
-#define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
-#define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
-#define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
-#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
+#include "audio-capture-helper.h"
 
 /* clang-format off */
 
@@ -107,7 +79,7 @@ static inline float recapture_rate_to_float(enum recapture_rate rate)
 	}
 }
 
-typedef struct audio_capture_config {
+struct audio_capture_config_t {
 	enum mode mode;
 	HWND hotkey_window;
 
@@ -116,9 +88,9 @@ typedef struct audio_capture_config {
 
 	bool exclude_process_tree;
 	float retry_interval;
-} audio_capture_config_t;
+};
 
-typedef struct audio_capture_context {
+struct audio_capture_context_t {
 	bool worker_initialized;
 	HANDLE worker_thread;
 
@@ -132,14 +104,9 @@ typedef struct audio_capture_context {
 	HANDLE timer;
 	HANDLE timer_queue;
 
-	char *tag;
-	HANDLE events[NUM_EVENTS_TOTAL];
+	HANDLE events[NUM_EVENTS];
 
-	HANDLE data_map;
-	volatile audio_capture_helper_data_t *data;
-
-	HANDLE helper_process;
-	DWORD helper_process_id;
+	std::optional<AudioCaptureHelper> helper;
 
 	HANDLE process;
 	DWORD process_id;
@@ -147,4 +114,4 @@ typedef struct audio_capture_context {
 
 	bool window_selected;
 	bool exclude_process_tree;
-} audio_capture_context_t;
+};

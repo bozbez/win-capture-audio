@@ -5,10 +5,11 @@
 
 #include <obs.h>
 
-static inline enum speaker_layout
-get_obs_speaker_layout(WAVEFORMATEXTENSIBLE *format)
+static inline enum speaker_layout get_obs_speaker_layout(WAVEFORMATEX *format)
 {
-	switch (format->Format.nChannels) {
+	auto format_ex = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(format);
+
+	switch (format_ex->Format.nChannels) {
 	case 1:
 		return SPEAKERS_MONO;
 	case 2:
@@ -42,20 +43,22 @@ static inline enum audio_format get_obs_pcm_format(int bits_per_sample)
 	return AUDIO_FORMAT_UNKNOWN;
 }
 
-static inline enum audio_format get_obs_format(WAVEFORMATEXTENSIBLE *format)
+static inline enum audio_format get_obs_format(WAVEFORMATEX *format)
 {
-	switch (format->Format.wFormatTag) {
+	auto format_ex = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(format);
+
+	switch (format_ex->Format.wFormatTag) {
 	case WAVE_FORMAT_PCM:
-		return get_obs_pcm_format(format->Format.wBitsPerSample);
+		return get_obs_pcm_format(format_ex->Format.wBitsPerSample);
 
 	case WAVE_FORMAT_IEEE_FLOAT:
 		return AUDIO_FORMAT_FLOAT;
 
 	case WAVE_FORMAT_EXTENSIBLE:
-		if (format->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
+		if (format_ex->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
 			return get_obs_pcm_format(
-				format->Format.wBitsPerSample);
-		} else if (format->SubFormat ==
+				format_ex->Format.wBitsPerSample);
+		} else if (format_ex->SubFormat ==
 			   KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
 			return AUDIO_FORMAT_FLOAT;
 		}

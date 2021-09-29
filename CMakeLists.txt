@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(win-capture-audio VERSION 2.0.0)
+project(win-capture-audio VERSION 2.1.0)
 
 set(PLUGIN_AUTHOR "bozbez")
 set(RELEASE_DIR "${PROJECT_SOURCE_DIR}/release")
@@ -18,13 +18,17 @@ configure_file(
 find_package(LibObs REQUIRED)
 
 set(win-capture-audio_SOURCES
-    src/plugin.c
-    src/audio-capture.c
-    src/obfuscate.c
-    src/window-helpers.c)
+    src/plugin.cpp
+    src/audio-capture.cpp
+    src/obfuscate.cpp
+    src/window-helpers.cpp
+    src/audio-capture-helper.cpp)
 
 add_library(win-capture-audio MODULE ${win-capture-audio_SOURCES})
-target_link_libraries(win-capture-audio libobs dwmapi psapi)
+target_link_libraries(win-capture-audio libobs dwmapi psapi ksuser mmdevapi mfplat)
+
+set_property(TARGET win-capture-audio PROPERTY CXX_STANDARD 20)
+target_include_directories(win-capture-audio PUBLIC ${CMAKE_SOURCE_DIR}/deps/wil/include)
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND if $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>==1 (
@@ -53,29 +57,3 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 
     VERBATIM
 )
-
-function(copy_helper_lib)
-    set(DATA_DIR "${RELEASE_DIR}/data/obs-plugins/${CMAKE_PROJECT_NAME}")
-    add_custom_command(TARGET ${ARGV0} POST_BUILD
-        COMMAND if $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>==1 (
-            "${CMAKE_COMMAND}" -E make_directory
-                "${RELEASE_DIR}/data/obs-plugins/${CMAKE_PROJECT_NAME}"
-        )
-
-        COMMAND if $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>==1 (
-            "${CMAKE_COMMAND}" -E copy
-                "$<TARGET_FILE:${ARGV0}>"
-                "${RELEASE_DIR}/data/obs-plugins/${CMAKE_PROJECT_NAME}"
-        )
-
-        COMMAND if $<CONFIG:RelWithDebInfo>==1 (
-            "${CMAKE_COMMAND}" -E copy
-                "$<TARGET_FILE_BASE_NAME:${ARGV0}>.pdb"
-                "${RELEASE_DIR}/data/obs-plugins/${CMAKE_PROJECT_NAME}"
-        )
-
-        VERBATIM
-    )
-endfunction()
-
-add_subdirectory(src/audio-capture-helper)

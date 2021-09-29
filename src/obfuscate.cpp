@@ -19,10 +19,10 @@ static void deobfuscate_str(char *str, uint64_t val)
 		int pos = i / 2;
 		bool bottom = (i % 2) == 0;
 		uint8_t *ch = (uint8_t *)str;
-		uint8_t xor = bottom ? LOWER_HALFBYTE(dec_val[pos])
-				     : UPPER_HALFBYTE(dec_val[pos]);
+		uint8_t xor_byte = bottom ? LOWER_HALFBYTE(dec_val[pos])
+					  : UPPER_HALFBYTE(dec_val[pos]);
 
-		*ch ^= xor;
+		*ch ^= xor_byte;
 
 		if (++i == sizeof(uint64_t) * 2)
 			i = 0;
@@ -36,5 +36,6 @@ void *get_obfuscated_func(HMODULE module, const char *str, uint64_t val)
 	char new_name[128];
 	strncpy_s(new_name, 128, str, 128);
 	deobfuscate_str(new_name, val);
+	
 	return GetProcAddress(module, new_name);
 }

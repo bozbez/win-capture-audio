@@ -1,3 +1,4 @@
+#include <array>
 #include <windows.h>
 
 #include <stdint.h>
@@ -8,15 +9,13 @@
 
 #include <wil/result.h>
 
-#include "../common.h"
-
-#include "audio-capture-helper.hpp"
-#include "format-conversion.hpp"
+#include "audio-capture-helper.h"
+#include "format-conversion.h"
 #include "wil/result_macros.h"
 
 AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
 {
-	auto mode = options.include_tree
+	auto mode = include_tree
 			    ? PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
 			    : PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
 
@@ -24,7 +23,7 @@ AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
 		.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
 		.ProcessLoopbackParams =
 			{
-				.TargetProcessId = options.pid,
+				.TargetProcessId = pid,
 				.ProcessLoopbackMode = mode,
 			},
 	};
@@ -85,40 +84,6 @@ void AudioCaptureHelper::InitClient()
 
 	event_data.create();
 	client->SetEventHandle(event_data.get());
-
-	wchar_t name[MAX_PATH];
-	format_name_tag(name, HELPER_EVENT_DATA_NAME, options.tag);
-	event_data_forward.open(name);
-}
-
-void AudioCaptureHelper::InitData()
-{
-	wchar_t name[MAX_PATH];
-	format_name_tag(name, HELPER_DATA_NAME, options.tag);
-
-	data_map = wil::unique_handle(
-		OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name));
-
-	if (!data_map) {
-		error("failed to open file mapping with name: %ls", name);
-		return;
-	}
-
-	auto data_void = MapViewOfFile(data_map.get(), FILE_MAP_ALL_ACCESS, 0,
-				       0, sizeof(audio_capture_helper_data_t));
-
-	data = wil::unique_mapview_ptr<audio_capture_helper_data_t>(
-		(audio_capture_helper_data_t *)data_void);
-
-	if (!data) {
-		error("failed to create file map view");
-		return;
-	}
-
-	data->speakers =
-		get_obs_speaker_layout((WAVEFORMATEXTENSIBLE *)format.get());
-	data->format = get_obs_format((WAVEFORMATEXTENSIBLE *)format.get());
-	data->samples_per_sec = format->nSamplesPerSec;
 }
 
 void AudioCaptureHelper::InitCapture()
@@ -129,13 +94,12 @@ void AudioCaptureHelper::InitCapture()
 	client->GetService(__uuidof(IAudioCaptureClient),
 			   capture_client.put_void());
 
-	THROW_IF_FAILED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
-
 	DWORD task_id = 0;
 	THROW_IF_FAILED(
 		MFLockSharedWorkQueue(L"Capture", 0, &task_id, &queue_id));
 	callback_packet_ready.SetQueueId(queue_id);
 
+	event_result_shutdown.create();
 	THROW_IF_FAILED(MFCreateAsyncResult(nullptr, &callback_packet_ready,
 					    nullptr, &packet_ready_result));
 }
@@ -148,15 +112,11 @@ HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
 				     &packet_ready_key);
 	});
 
-	if (InterlockedCompareExchange(&data->lock, 1, 0) != 0) {
-		warn("failed to acquire data lock");
-		return S_OK;
-	}
-
-	auto unlock_and_forward = wil::scope_exit([&]() {
-		InterlockedExchange(&data->lock, 0);
-		event_data_forward.SetEvent();
-	});
+	obs_source_audio packet = {
+		.speakers = get_obs_speaker_layout(format.get()),
+		.format = get_obs_format(format.get()),
+		.samples_per_sec = format->nSamplesPerSec,
+	};
 
 	size_t frame_size = format->nBlockAlign;
 	size_t frame_size_packed =
@@ -173,22 +133,19 @@ HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
 		capture_client->GetBuffer(&new_data, &num_frames, &flags, NULL,
 					  &qpc_position);
 
-		int cur_packet = data->num_packets++;
-		data->timestamp[cur_packet] = qpc_position * 100;
+		if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
+			packet.timestamp = qpc_position * 100;
+			packet.frames = num_frames;
 
-		bool silent = flags & AUDCLNT_BUFFERFLAGS_SILENT;
-		for (size_t i = 0; i < num_frames; ++i) {
-			size_t pos = i * frame_size;
-			size_t pos_packed = i * frame_size_packed;
-
-			for (size_t j = 0; j < frame_size_packed; ++j) {
-				data->data[cur_packet][pos_packed + j] =
-					silent ? 0 : new_data[pos + j];
-			}
+			packet.data[0] = new_data;
+			obs_source_output_audio(source, &packet);
 		}
 
-		data->data_size[cur_packet] = frame_size_packed * num_frames;
-		data->frames[cur_packet] = num_frames;
+		if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
+			warn("data discontinuity flag set");
+
+		if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
+			warn("timestamp error flag set");
 
 		capture_client->ReleaseBuffer(num_frames);
 		capture_client->GetNextPacketSize(&num_frames);
@@ -197,8 +154,11 @@ HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
 	return S_OK;
 }
 
-void AudioCaptureHelper::Start()
+AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid,
+				       bool include_tree)
+	: source{source}, pid{pid}, include_tree{include_tree}
 {
+	InitCapture();
 	THROW_IF_FAILED(MFPutWaitingWorkItem(event_data.get(), 0,
 					     packet_ready_result.get(),
 					     &packet_ready_key));
@@ -206,66 +166,13 @@ void AudioCaptureHelper::Start()
 	client->Start();
 }
 
-void AudioCaptureHelper::Stop()
+AudioCaptureHelper::~AudioCaptureHelper()
 {
 	client->Stop();
 	THROW_IF_FAILED(MFCancelWorkItem(packet_ready_key));
-}
 
-CaptureOptions::CaptureOptions(int argc, char *argv[])
-{
-	if (argc != 4)
-		throw std::runtime_error("wrong number of arguments");
+	packet_ready_result.reset();
+	event_result_shutdown.wait();
 
-	pid = strtoul(argv[1], NULL, 0);
-	if (pid == 0)
-		throw std::runtime_error("failed to parse PID");
-
-	if (strcmp("include", argv[2]) == 0)
-		include_tree = true;
-	else if (strcmp("exclude", argv[2]) == 0)
-		include_tree = false;
-	else
-		throw std::runtime_error("failed to parse mode");
-
-	tag = argv[3];
-	if (strlen(tag) < 1)
-		throw std::runtime_error("failed to parse tag");
-}
-
-void run(CaptureOptions options)
-{
-	wchar_t name[MAX_PATH];
-	format_name_tag(name, HELPER_WO_EVENT_SHUTDOWN_NAME, options.tag);
-
-	wil::unique_event event_shutdown;
-	event_shutdown.open(name);
-
-	AudioCaptureHelper helper(options);
-
-	helper.Start();
-	event_shutdown.wait();
-	helper.Stop();
-}
-
-int main(int argc, char *argv[])
-{
-	HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-	if (FAILED(hr)) {
-		error("failed to initialize COM runtime");
-		return 1;
-	}
-
-	try {
-		run(CaptureOptions(argc, argv));
-	} catch (wil::ResultException err) {
-		error("%s", err.what());
-		return err.GetErrorCode();
-	} catch (std::runtime_error err) {
-		error("%s", err.what());
-		return 1;
-	}
-
-	CoUninitialize();
-	return 0;
+	MFUnlockWorkQueue(queue_id);
 }

@@ -14,72 +14,46 @@
 		(punk) = NULL;         \
 	}
 
-#define HELPER_DATA_SIZE (1024 * 1024)
-#define HELPER_MAX_FRAMES 32
-
-#define HELPER_DATA_NAME L"Local\\OBS_ACHelper_Data"
-
-#define HELPER_WO_EVENT_SHUTDOWN_NAME L"Local\\OBS_ACHelper_WOEventShutdown"
-#define HELPER_EVENT_DATA_NAME L"Local\\OBS_ACHelper_EventData"
-
-#define NUM_HELPER_WO_EVENTS 1
-#define NUM_HELPER_EVENTS 1
 #define NUM_EVENTS 2
 
-#define HELPER_WO_EVENTS_START 0
-#define HELPER_WO_EVENTS_END (HELPER_WO_EVENTS_START + NUM_HELPER_WO_EVENTS)
-
-#define HELPER_EVENTS_START HELPER_WO_EVENTS_END
-#define HELPER_EVENTS_END (HELPER_EVENTS_START + NUM_HELPER_EVENTS)
-
-#define EVENTS_START HELPER_EVENTS_END
+#define EVENTS_START 0
 #define EVENTS_END (EVENTS_START + NUM_EVENTS)
 
-#define NUM_HELPER_EVENTS_TOTAL (NUM_HELPER_WO_EVENTS + NUM_HELPER_EVENTS)
-#define NUM_EVENTS_TOTAL (NUM_HELPER_EVENTS_TOTAL + NUM_EVENTS)
+#define do_log(level, format, ...) \
+	do_log_source(level, "(%s) " format, __func__, ##__VA_ARGS__)
+
+inline static void do_log_source(int level, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+
+	const char *name = "unknown";
+	int len = strlen(name);
+
+	const char *format_source = len <= 8 ? "[audio-capture: '%s'] %s"
+					     : "[audio-capture: '%.8s...'] %s";
+
+	int len_full = strlen(format_source) + 12 + strlen(format);
+	char *format_full = (char *)bzalloc(len_full);
+
+	snprintf(format_full, len_full, format_source, name, format);
+	blogva(level, format_full, args);
+
+	bfree(format_full);
+	va_end(args);
+}
+
+#define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
+#define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
+#define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
+#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 
 enum event {
-	HELPER_WO_EVENT_SHUTDOWN,
-
-	HELPER_EVENT_DATA,
-
 	EVENT_SHUTDOWN,
 	EVENT_UPDATE,
 
 	EVENT_PROCESS_TARGET,
-	EVENT_PROCESS_HELPER,
 };
-
-static const wchar_t *event_names[NUM_EVENTS_TOTAL] = {
-	HELPER_WO_EVENT_SHUTDOWN_NAME, HELPER_EVENT_DATA_NAME};
-
-static inline void format_name_tag(wchar_t *buf, const wchar_t *name,
-				   const char *tag)
-{
-	swprintf(buf, MAX_PATH, L"%s_%S", name, tag);
-}
-
-static inline void format_tag(char *buf, DWORD target_pid)
-{
-	sprintf(buf, "%lu_%lu_%lu_%llu", GetCurrentProcessId(),
-		GetCurrentThreadId(), target_pid, os_gettime_ns());
-}
-
-typedef struct audio_capture_helper_data {
-	long lock;
-
-	enum speaker_layout speakers;
-	enum audio_format format;
-	uint32_t samples_per_sec;
-
-	uint32_t num_packets;
-
-	uint32_t frames[HELPER_MAX_FRAMES];
-	uint64_t timestamp[HELPER_MAX_FRAMES];
-
-	size_t data_size[HELPER_MAX_FRAMES];
-	uint8_t data[HELPER_MAX_FRAMES][HELPER_DATA_SIZE];
-} audio_capture_helper_data_t;
 
 static inline void safe_close_handle(HANDLE *handle)
 {
