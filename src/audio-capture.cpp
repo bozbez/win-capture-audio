@@ -27,14 +27,9 @@ VOID CALLBACK set_update(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 	SetEvent(ctx->events[EVENT_UPDATE]);
 }
 
-void set_update_timer(audio_capture_context_t *ctx, float interval)
+void set_update_timer(audio_capture_context_t *ctx)
 {
 	EnterCriticalSection(&ctx->timer_section);
-
-	EnterCriticalSection(&ctx->config_section);
-	DWORD time_millis =
-		(DWORD)(ctx->config.retry_interval * interval * 1000.0);
-	LeaveCriticalSection(&ctx->config_section);
 
 	if (ctx->timer != NULL) {
 		DeleteTimerQueueTimer(ctx->timer_queue, ctx->timer,
@@ -42,9 +37,8 @@ void set_update_timer(audio_capture_context_t *ctx, float interval)
 		ctx->timer = NULL;
 	}
 
-	// debug("setting timer for %ld millis", time_millis);
 	CreateTimerQueueTimer(&ctx->timer, ctx->timer_queue, set_update, ctx,
-			      time_millis, 0, WT_EXECUTEINTIMERTHREAD);
+			      2000, 0, WT_EXECUTEINTIMERTHREAD);
 
 	LeaveCriticalSection(&ctx->timer_section);
 }
@@ -106,7 +100,7 @@ static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
 	if (ctx->process_id != 0)
 		start_capture(ctx);
 	else if (ctx->window_selected)
-		set_update_timer(ctx, RECAPTURE_INTERVAL_DEFAULT);
+		set_update_timer(ctx);
 }
 
 static void audio_capture_worker_update(audio_capture_context_t *ctx)
@@ -254,9 +248,6 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 			settings, SETTING_WINDOW_PRIORITY),
 		.exclude_process_tree = obs_data_get_bool(
 			settings, SETTING_EXCLUDE_PROCESS_TREE),
-		.retry_interval = recapture_rate_to_float(
-			(recapture_rate)obs_data_get_int(
-				settings, SETTING_RECAPTURE_RATE)),
 	};
 
 	const char *window = obs_data_get_string(settings, SETTING_WINDOW);
@@ -291,11 +282,6 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	    new_config.exclude_process_tree) {
 		ctx->config.exclude_process_tree =
 			new_config.exclude_process_tree;
-		need_update = true;
-	}
-
-	if (ctx->config.retry_interval != new_config.retry_interval) {
-		ctx->config.retry_interval = new_config.retry_interval;
 		need_update = true;
 	}
 
@@ -552,20 +538,6 @@ static obs_properties_t *audio_capture_properties(void *data)
 	p = obs_properties_add_bool(ps, SETTING_EXCLUDE_PROCESS_TREE,
 				    TEXT_EXCLUDE_PROCESS_TREE);
 
-	// Recapture rate setting
-	p = obs_properties_add_list(ps, SETTING_RECAPTURE_RATE,
-				    TEXT_RECAPTURE_RATE, OBS_COMBO_TYPE_LIST,
-				    OBS_COMBO_FORMAT_INT);
-
-	obs_property_list_add_int(p, TEXT_RECAPTURE_RATE_SLOW,
-				  RECAPTURE_RATE_SLOW);
-	obs_property_list_add_int(p, TEXT_RECAPTURE_RATE_NORMAL,
-				  RECAPTURE_RATE_NORMAL);
-	obs_property_list_add_int(p, TEXT_RECAPTURE_RATE_FAST,
-				  RECAPTURE_RATE_FAST);
-	obs_property_list_add_int(p, TEXT_RECAPTURE_RATE_FASTEST,
-				  RECAPTURE_RATE_FASTEST);
-
 	return ps;
 }
 
@@ -577,8 +549,6 @@ static void audio_capture_defaults(obs_data_t *settings)
 				 WINDOW_PRIORITY_EXE);
 	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE,
 				  false);
-	obs_data_set_default_int(settings, SETTING_RECAPTURE_RATE,
-				 RECAPTURE_RATE_NORMAL);
 }
 
 static const char *audio_capture_get_name(void *type_data)

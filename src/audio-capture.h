@@ -21,8 +21,6 @@
 
 #define SETTING_EXCLUDE_PROCESS_TREE   "exclude_process_tree"
 
-#define SETTING_RECAPTURE_RATE         "recapture_rate"
-
 #define TEXT_NAME                      obs_module_text("Name")
 
 #define TEXT_MODE                      obs_module_text("Mode")
@@ -40,44 +38,12 @@
 
 #define TEXT_EXCLUDE_PROCESS_TREE      obs_module_text("ExcludeProcessTree")
 
-#define TEXT_RECAPTURE_RATE            obs_module_text("RecaptureRate")
-#define TEXT_RECAPTURE_RATE_SLOW       obs_module_text("RecaptureRate.Slow")
-#define TEXT_RECAPTURE_RATE_NORMAL     obs_module_text("RecaptureRate.Normal")
-#define TEXT_RECAPTURE_RATE_FAST       obs_module_text("RecaptureRate.Fast")
-#define TEXT_RECAPTURE_RATE_FASTEST    obs_module_text("RecaptureRate.Fastest")
-
 #define HOTKEY_START                   "hotkey_start"
 #define HOTKEY_STOP                    "hotkey_stop"
-
-#define RECAPTURE_INTERVAL_DEFAULT      2.0f
-#define RECAPTURE_INTERVAL_ERROR        4.0f
 
 /* clang-format on */
 
 enum mode { MODE_WINDOW, MODE_HOTKEY };
-
-enum recapture_rate {
-	RECAPTURE_RATE_SLOW,
-	RECAPTURE_RATE_NORMAL,
-	RECAPTURE_RATE_FAST,
-	RECAPTURE_RATE_FASTEST
-};
-
-static inline float recapture_rate_to_float(enum recapture_rate rate)
-{
-	switch (rate) {
-	case RECAPTURE_RATE_SLOW:
-		return 2.0f;
-	case RECAPTURE_RATE_FAST:
-		return 0.5f;
-	case RECAPTURE_RATE_FASTEST:
-		return 0.1f;
-	case RECAPTURE_RATE_NORMAL:
-		/* FALLTHROUGH */
-	default:
-		return 1.0f;
-	}
-}
 
 struct audio_capture_config_t {
 	enum mode mode;
@@ -87,7 +53,6 @@ struct audio_capture_config_t {
 	enum window_priority priority;
 
 	bool exclude_process_tree;
-	float retry_interval;
 };
 
 struct audio_capture_context_t {
