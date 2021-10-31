@@ -17,6 +17,7 @@
 #include <util/bmem.h>
 #include <util/platform.h>
 
+#include "wil/result_macros.h"
 #include "window-helpers.h"
 #include "audio-capture.h"
 #include "obfuscate.h"
@@ -77,8 +78,13 @@ static inline bool process_is_alive(DWORD pid)
 
 static void start_capture(audio_capture_context_t *ctx)
 {
-	ctx->helper.emplace(ctx->source, ctx->process_id,
-			    !ctx->exclude_process_tree);
+	try {
+		ctx->helper.emplace(ctx->source, ctx->process_id,
+				    !ctx->exclude_process_tree);
+	} catch (wil::ResultException e) {
+		error("failed to create helper... update Windows?");
+		error("%s", e.what());
+	}
 
 	ctx->process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
 				    false, ctx->process_id);
@@ -89,7 +95,12 @@ static void start_capture(audio_capture_context_t *ctx)
 
 static void stop_capture(audio_capture_context_t *ctx)
 {
-	ctx->helper.reset();
+	try {
+		ctx->helper.reset();
+	} catch (wil::ResultException e) {
+		error("failed to destruct helper");
+		error("%s", e.what());
+	}
 }
 
 static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
