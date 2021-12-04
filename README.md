@@ -7,6 +7,8 @@ Internally it uses [ActivateAudioInterfaceAsync](https://docs.microsoft.com/en-u
 **This plugin is in a BETA state, expect issues - [https://discord.gg/4D5Yk5gFnM](https://discord.gg/4D5Yk5gFnM) for support and updates.**<br/>
 **An updated version of Windows 10 2004 (released 2020-05-27) or later is required.**
 
+**Want to support the development of the plugin? [https://ko-fi.com/bozbez](https://ko-fi.com/bozbez)**
+
 ![overview](https://raw.githubusercontent.com/bozbez/win-capture-audio/main/media/overview.png)
 
 ## Installation and Usage
