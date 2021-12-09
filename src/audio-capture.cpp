@@ -64,7 +64,7 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 
 static inline bool process_is_alive(DWORD pid)
 {
-	HANDLE process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
+	HANDLE process = open_process(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
 				      false, pid);
 	if (process == NULL)
 		return false;
