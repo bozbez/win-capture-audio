@@ -358,7 +358,6 @@ static const char *internal_microsoft_exes_exact[] = {
 	"systemsettings.exe",
 	"textinputhost.exe",
 	"searchapp.exe",
-	"video.ui.exe",
 	"searchui.exe",
 	"lockapp.exe",
 	"cortana.exe",
