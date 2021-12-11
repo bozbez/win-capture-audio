@@ -192,7 +192,7 @@ static int window_rating(HWND window, enum window_priority priority,
 	return val;
 }
 
-extern HWND window_info_get_window(window_info_t *info,
+extern HWND window_info_get_window(const window_info_t *info,
 				   enum window_priority priority)
 {
 	if (strcmp(info->cls, "dwm") == 0) {

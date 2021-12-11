@@ -135,7 +135,9 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 					 &ctx->next_process_id);
 
 		if (!process_is_alive(ctx->next_process_id)) {
-			config.hotkey_window = NULL;
+			EnterCriticalSection(&ctx->config_section);
+			ctx->config.hotkey_window = NULL;
+			LeaveCriticalSection(&ctx->config_section);
 
 			ctx->window_selected = false;
 			ctx->next_process_id = 0;

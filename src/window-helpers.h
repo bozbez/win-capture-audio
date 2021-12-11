@@ -24,7 +24,7 @@ struct window_info_t {
 
 extern void window_info_destroy(window_info_t *info);
 extern bool window_info_cmp(window_info_t *info_a, window_info_t *info_b);
-extern HWND window_info_get_window(window_info_t *info,
+extern HWND window_info_get_window(const window_info_t *info,
 				   enum window_priority priority);
 
 extern bool get_window_exe(struct dstr *name, HWND window);
