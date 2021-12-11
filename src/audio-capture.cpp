@@ -117,26 +117,25 @@ static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
 static void audio_capture_worker_update(audio_capture_context_t *ctx)
 {
 	EnterCriticalSection(&ctx->config_section);
-	audio_capture_config_t config_temp;
-	memcpy(&config_temp, &ctx->config, sizeof(audio_capture_config_t));
+	const auto config = ctx->config;
 	LeaveCriticalSection(&ctx->config_section);
 
 	HWND window;
-	ctx->exclude_process_tree = config_temp.exclude_process_tree;
+	ctx->exclude_process_tree = config.exclude_process_tree;
 
-	if (config_temp.mode == MODE_HOTKEY) {
-		if (config_temp.hotkey_window == NULL) {
+	if (config.mode == MODE_HOTKEY) {
+		if (config.hotkey_window == NULL) {
 			ctx->window_selected = false;
 			ctx->next_process_id = 0;
 			goto exit;
 		}
 
 		ctx->window_selected = true;
-		GetWindowThreadProcessId(config_temp.hotkey_window,
+		GetWindowThreadProcessId(config.hotkey_window,
 					 &ctx->next_process_id);
 
 		if (!process_is_alive(ctx->next_process_id)) {
-			config_temp.hotkey_window = NULL;
+			config.hotkey_window = NULL;
 
 			ctx->window_selected = false;
 			ctx->next_process_id = 0;
@@ -145,7 +144,7 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 		goto exit;
 	}
 
-	if (config_temp.window_info.title == NULL) {
+	if (config.window_info.title == NULL) {
 		ctx->next_process_id = 0;
 		ctx->window_selected = false;
 
@@ -153,8 +152,8 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 	}
 
 	ctx->window_selected = true;
-	window = window_info_get_window(&config_temp.window_info,
-					config_temp.priority);
+	window = window_info_get_window(&config.window_info,
+					config.priority);
 
 	if (window != NULL)
 		GetWindowThreadProcessId(window, &ctx->next_process_id);
@@ -163,9 +162,9 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 
 	if (ctx->next_process_id != 0) {
 		debug("resolved window: \"%s\" \"%s\" \"%s\" to PID %lu",
-		      config_temp.window_info.title,
-		      config_temp.window_info.cls,
-		      config_temp.window_info.executable, ctx->next_process_id);
+		      config.window_info.title,
+		      config.window_info.cls,
+		      config.window_info.executable, ctx->next_process_id);
 	}
 
 exit:
