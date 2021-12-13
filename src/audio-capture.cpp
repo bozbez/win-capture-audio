@@ -64,8 +64,8 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 
 static inline bool process_is_alive(DWORD pid)
 {
-	HANDLE process = open_process(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
-				      false, pid);
+	HANDLE process = open_process(
+		PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, pid);
 	if (process == NULL)
 		return false;
 
@@ -154,8 +154,7 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 	}
 
 	ctx->window_selected = true;
-	window = window_info_get_window(&config.window_info,
-					config.priority);
+	window = window_info_get_window(&config.window_info, config.priority);
 
 	if (window != NULL)
 		GetWindowThreadProcessId(window, &ctx->next_process_id);
@@ -164,8 +163,7 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 
 	if (ctx->next_process_id != 0) {
 		debug("resolved window: \"%s\" \"%s\" \"%s\" to PID %lu",
-		      config.window_info.title,
-		      config.window_info.cls,
+		      config.window_info.title, config.window_info.cls,
 		      config.window_info.executable, ctx->next_process_id);
 	}
 
@@ -314,16 +312,29 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 	auto *ctx = static_cast<audio_capture_context_t *>(data);
 	bool needs_update = false;
 
-	EnterCriticalSection(&ctx->config_section);
-	if (pressed && ctx->config.mode == MODE_HOTKEY) {
-		debug("activate hotkey pressed");
-		HWND new_window = GetForegroundWindow();
-		if (ctx->config.hotkey_window != new_window) {
-			ctx->config.hotkey_window = new_window;
-			needs_update = true;
+	if (pressed) {
+		EnterCriticalSection(&ctx->config_section);
+		bool hotkey_actived = (ctx->config.mode == MODE_HOTKEY);
+		LeaveCriticalSection(&ctx->config_section);
+
+		if (hotkey_actived) {
+			debug("activate hotkey pressed");
+
+			HWND new_window = GetForegroundWindow();
+			if (is_uwp_window(new_window)) {
+				new_window = get_uwp_actual_window(new_window);
+			}
+
+			/* because config_section was released before, so mode should be checked again here */
+			EnterCriticalSection(&ctx->config_section);
+			if ((ctx->config.mode == MODE_HOTKEY) &&
+			    ctx->config.hotkey_window != new_window) {
+				ctx->config.hotkey_window = new_window;
+				needs_update = true;
+			}
+			LeaveCriticalSection(&ctx->config_section);
 		}
 	}
-	LeaveCriticalSection(&ctx->config_section);
 
 	if (needs_update)
 		SetEvent(ctx->events[EVENT_UPDATE]);
