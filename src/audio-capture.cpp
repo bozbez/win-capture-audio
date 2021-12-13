@@ -86,8 +86,9 @@ static void start_capture(audio_capture_context_t *ctx)
 		error("%s", e.what());
 	}
 
-	ctx->process = open_process(PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
-				    false, ctx->process_id);
+	ctx->process =
+		open_process(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+			     false, ctx->process_id);
 
 	if (ctx->process == NULL)
 		warn("failed to open target process, can't detect termination");
