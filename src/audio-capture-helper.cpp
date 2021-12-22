@@ -1,4 +1,4 @@
-#include <array>
+#include <functional>
 #include <windows.h>
 
 #include <stdint.h>
@@ -82,8 +82,7 @@ void AudioCaptureHelper::InitClient()
 				   AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
 			   5 * 10000000, 0, format.get(), NULL);
 
-	event_data.create();
-	client->SetEventHandle(event_data.get());
+	client->SetEventHandle(events[HelperEvents::PacketReady].get());
 }
 
 void AudioCaptureHelper::InitCapture()
@@ -93,25 +92,39 @@ void AudioCaptureHelper::InitCapture()
 
 	client->GetService(__uuidof(IAudioCaptureClient),
 			   capture_client.put_void());
-
-	DWORD task_id = 0;
-	THROW_IF_FAILED(
-		MFLockSharedWorkQueue(L"Capture", 0, &task_id, &queue_id));
-	callback_packet_ready.SetQueueId(queue_id);
-
-	event_result_shutdown.create();
-	THROW_IF_FAILED(MFCreateAsyncResult(nullptr, &callback_packet_ready,
-					    nullptr, &packet_ready_result));
 }
 
-HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
+void AudioCaptureHelper::Capture()
 {
-	auto requeue_callback = wil::scope_exit([&]() {
-		MFPutWaitingWorkItem(event_data.get(), 0,
-				     packet_ready_result.get(),
-				     &packet_ready_key);
-	});
+	InitCapture();
+	client->Start();
 
+	bool shutdown = false;
+	while (!shutdown) {
+		auto event_id = WaitForMultipleObjects(
+			events.size(), events[0].addressof(), FALSE, INFINITE);
+			
+		switch (event_id) {
+		case HelperEvents::PacketReady:
+			ForwardPacket();
+			break;
+
+		case HelperEvents::Shutdown:
+			shutdown = true;
+			break;
+
+		default:
+			error("wait failed with result: %d", event_id);
+			shutdown = true;
+			break;
+		}
+	}
+
+	client->Stop();
+}
+
+void AudioCaptureHelper::ForwardPacket()
+{
 	obs_source_audio packet = {
 		.speakers = get_obs_speaker_layout(format.get()),
 		.format = get_obs_format(format.get()),
@@ -150,29 +163,20 @@ HRESULT AudioCaptureHelper::OnPacketReady(IMFAsyncResult *result)
 		capture_client->ReleaseBuffer(num_frames);
 		capture_client->GetNextPacketSize(&num_frames);
 	}
-
-	return S_OK;
 }
 
 AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid,
 				       bool include_tree)
 	: source{source}, pid{pid}, include_tree{include_tree}
 {
-	InitCapture();
-	THROW_IF_FAILED(MFPutWaitingWorkItem(event_data.get(), 0,
-					     packet_ready_result.get(),
-					     &packet_ready_key));
+	for (auto& event : events)
+		event.create();
 
-	client->Start();
+	capture_thread = std::thread(&AudioCaptureHelper::Capture, this);
 }
 
 AudioCaptureHelper::~AudioCaptureHelper()
 {
-	client->Stop();
-	THROW_IF_FAILED(MFCancelWorkItem(packet_ready_key));
-
-	packet_ready_result.reset();
-	event_result_shutdown.wait();
-
-	MFUnlockWorkQueue(queue_id);
+	events[HelperEvents::Shutdown].SetEvent();
+	capture_thread.join();
 }
