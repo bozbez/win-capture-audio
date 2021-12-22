@@ -18,9 +18,9 @@
 #include <util/platform.h>
 
 #include "wil/result_macros.h"
-#include "window-helpers.h"
-#include "audio-capture.h"
-#include "obfuscate.h"
+#include "window-helpers.hpp"
+#include "audio-capture.hpp"
+#include "obfuscate.hpp"
 
 VOID CALLBACK set_update(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 {

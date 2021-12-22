@@ -8,9 +8,9 @@
 #include <obs.h>
 #include <util/darray.h>
 
-#include "common.h"
-#include "window-helpers.h"
-#include "audio-capture-helper.h"
+#include "common.hpp"
+#include "window-helpers.hpp"
+#include "audio-capture-helper.hpp"
 
 /* clang-format off */
 

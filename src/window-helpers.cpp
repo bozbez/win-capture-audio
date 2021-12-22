@@ -6,8 +6,8 @@
 #include <util/base.h>
 #include <util/platform.h>
 
-#include "window-helpers.h"
-#include "obfuscate.h"
+#include "window-helpers.hpp"
+#include "obfuscate.hpp"
 
 extern void window_info_destroy(window_info_t *info)
 {

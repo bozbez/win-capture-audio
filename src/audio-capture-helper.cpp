@@ -8,10 +8,10 @@
 #include <stdexcept>
 
 #include <wil/result.h>
+#include <wil/result_macros.h>
 
-#include "audio-capture-helper.h"
-#include "format-conversion.h"
-#include "wil/result_macros.h"
+#include "audio-capture-helper.hpp"
+#include "format-conversion.hpp"
 
 AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
 {
