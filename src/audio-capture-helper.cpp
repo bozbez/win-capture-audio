@@ -103,7 +103,7 @@ void AudioCaptureHelper::Capture()
 	while (!shutdown) {
 		auto event_id = WaitForMultipleObjects(
 			events.size(), events[0].addressof(), FALSE, INFINITE);
-			
+
 		switch (event_id) {
 		case HelperEvents::PacketReady:
 			ForwardPacket();
@@ -169,7 +169,14 @@ AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid,
 				       bool include_tree)
 	: source{source}, pid{pid}, include_tree{include_tree}
 {
-	for (auto& event : events)
+	/*
+	WASAPI can't be initialized with pid==0, so here we have to set it with an unknownd value
+	It will be terrible if 0XFFFFFFFF is a valid pid.
+	*/
+	if (!pid && !include_tree)
+		this->pid = 0XFFFFFFFF;
+
+	for (auto &event : events)
 		event.create();
 
 	capture_thread = std::thread(&AudioCaptureHelper::Capture, this);

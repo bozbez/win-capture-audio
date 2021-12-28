@@ -22,13 +22,13 @@
 #include "audio-capture.hpp"
 #include "obfuscate.hpp"
 
-VOID CALLBACK set_update(PVOID lpParam, BOOLEAN TimerOrWaitFired)
+VOID CALLBACK set_retry_update(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 {
 	auto *ctx = static_cast<audio_capture_context_t *>(lpParam);
-	SetEvent(ctx->events[EVENT_UPDATE]);
+	SetEvent(ctx->events[EVENT_RETRY]);
 }
 
-void set_update_timer(audio_capture_context_t *ctx)
+void set_retry_update_timer(audio_capture_context_t *ctx)
 {
 	EnterCriticalSection(&ctx->timer_section);
 
@@ -38,8 +38,8 @@ void set_update_timer(audio_capture_context_t *ctx)
 		ctx->timer = NULL;
 	}
 
-	CreateTimerQueueTimer(&ctx->timer, ctx->timer_queue, set_update, ctx,
-			      2000, 0, WT_EXECUTEINTIMERTHREAD);
+	CreateTimerQueueTimer(&ctx->timer, ctx->timer_queue, set_retry_update,
+			      ctx, 2000, 0, WT_EXECUTEINTIMERTHREAD);
 
 	LeaveCriticalSection(&ctx->timer_section);
 }
@@ -97,6 +97,9 @@ static void start_capture(audio_capture_context_t *ctx)
 static void stop_capture(audio_capture_context_t *ctx)
 {
 	try {
+		if (ctx->helper)
+			info("Stop capture module.");
+
 		ctx->helper.reset();
 	} catch (wil::ResultException e) {
 		error("failed to destruct helper");
@@ -104,18 +107,38 @@ static void stop_capture(audio_capture_context_t *ctx)
 	}
 }
 
-static void audio_capture_worker_recapture(audio_capture_context_t *ctx)
+static void audio_capture_worker_recapture(audio_capture_context_t *ctx,
+					   bool retrying)
 {
-	stop_capture(ctx);
+	if (!retrying) {
+		/* this is for update event, must stop capture */
+		stop_capture(ctx);
+	} else {
+		/* this is for retry event, should not stop capture except new process is found */
+		if (ctx->next_process_id)
+			stop_capture(ctx);
+	}
+
 	ctx->process_id = ctx->next_process_id;
 
-	if (ctx->process_id != 0)
+	if (ctx->process_id != 0) {
 		start_capture(ctx);
-	else if (ctx->window_selected)
-		set_update_timer(ctx);
+	} else if (ctx->window_selected) {
+		if (!retrying && ctx->exclude_process_tree) {
+			/*
+			When user selects "capture all except this", capture module should be run even process not found
+			In this situation, timer should be run for waiting the process. Capture module should be reset as
+			soon as process is found.
+			*/
+			info("Start capture module even process is not found.");
+			start_capture(ctx);
+		}
+		set_retry_update_timer(ctx);
+	}
 }
 
-static void audio_capture_worker_update(audio_capture_context_t *ctx)
+static void audio_capture_worker_update(audio_capture_context_t *ctx,
+					bool retrying)
 {
 	EnterCriticalSection(&ctx->config_section);
 	const auto config = ctx->config;
@@ -169,7 +192,7 @@ static void audio_capture_worker_update(audio_capture_context_t *ctx)
 	}
 
 exit:
-	audio_capture_worker_recapture(ctx);
+	audio_capture_worker_recapture(ctx, retrying);
 }
 
 static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
@@ -189,8 +212,12 @@ static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
 
 		break;
 
+	case EVENT_RETRY:
+		audio_capture_worker_update(ctx, true);
+		break;
+
 	case EVENT_UPDATE:
-		audio_capture_worker_update(ctx);
+		audio_capture_worker_update(ctx, false);
 		break;
 
 	case EVENT_PROCESS_TARGET:
@@ -199,7 +226,7 @@ static bool audio_capture_worker_tick(audio_capture_context_t *ctx,
 		safe_close_handle(&ctx->process);
 		ctx->process_id = 0;
 
-		audio_capture_worker_update(ctx);
+		audio_capture_worker_update(ctx, false);
 		break;
 
 	default:

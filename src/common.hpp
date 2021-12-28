@@ -14,7 +14,16 @@
 		(punk) = NULL;         \
 	}
 
-#define NUM_EVENTS 2
+enum event {
+	EVENT_SHUTDOWN = 0,
+	EVENT_UPDATE,
+	EVENT_RETRY,
+	EVENT_COUNT,
+
+	EVENT_PROCESS_TARGET,
+};
+
+#define NUM_EVENTS EVENT_COUNT
 
 #define EVENTS_START 0
 #define EVENTS_END (EVENTS_START + NUM_EVENTS)
@@ -47,13 +56,6 @@ inline static void do_log_source(int level, const char *format, ...)
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 #define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
-
-enum event {
-	EVENT_SHUTDOWN,
-	EVENT_UPDATE,
-
-	EVENT_PROCESS_TARGET,
-};
 
 static inline void safe_close_handle(HANDLE *handle)
 {
