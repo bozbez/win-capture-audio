@@ -76,14 +76,18 @@ static inline bool process_is_alive(DWORD pid)
 	return success && code == STILL_ACTIVE;
 }
 
-static void start_capture(audio_capture_context_t *ctx)
+static bool start_capture(audio_capture_context_t *ctx)
 {
+	bool success = true;
+
 	try {
 		ctx->helper.emplace(ctx->source, ctx->process_id,
 				    !ctx->exclude_process_tree);
 	} catch (wil::ResultException e) {
 		error("failed to create helper... update Windows?");
 		error("%s", e.what());
+
+		success = false;
 	}
 
 	ctx->process =
@@ -92,6 +96,8 @@ static void start_capture(audio_capture_context_t *ctx)
 
 	if (ctx->process == NULL)
 		warn("failed to open target process, can't detect termination");
+
+	return success;
 }
 
 static void stop_capture(audio_capture_context_t *ctx)
@@ -122,7 +128,9 @@ static void audio_capture_worker_recapture(audio_capture_context_t *ctx,
 	ctx->process_id = ctx->next_process_id;
 
 	if (ctx->process_id != 0) {
-		start_capture(ctx);
+		if (!start_capture(ctx))
+			set_retry_update_timer(ctx);
+
 	} else if (ctx->window_selected) {
 		if (!retrying && ctx->exclude_process_tree) {
 			/*
