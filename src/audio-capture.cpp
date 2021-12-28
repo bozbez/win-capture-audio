@@ -327,8 +327,23 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 
 	LeaveCriticalSection(&ctx->config_section);
 
-	if (need_update)
+	if (need_update) {
+		info("win-capture-audio updated.\n"
+		     "    mode: %d \n"
+		     "    priority: %d \n"
+		     "    exclude_process_tree: %d \n"
+		     "    exe: %s \n"
+		     "    title: %s",
+		     new_config.mode, new_config.priority,
+		     new_config.exclude_process_tree,
+		     new_config.window_info.executable
+			     ? new_config.window_info.executable
+			     : "(no exe)",
+		     new_config.window_info.title ? new_config.window_info.title
+						  : "(no title)");
+
 		SetEvent(ctx->events[EVENT_UPDATE]);
+	}
 }
 
 static bool hotkey_start(void *data, obs_hotkey_pair_id id,
