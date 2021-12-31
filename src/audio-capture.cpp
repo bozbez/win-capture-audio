@@ -305,6 +305,26 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 		SetEvent(ctx->events[EVENT_UPDATE]);
 }
 
+static void print_hotkey_window(HWND window)
+{
+	struct dstr cur_title = {0};
+	struct dstr cur_exe = {0};
+
+	if (!get_window_exe(&cur_exe, window))
+		return;
+	get_window_title(&cur_title, window);
+
+	if (cur_title.array && cur_exe.array) {
+		info("win-capture-audio select window by hotkey.\n"
+		     "    exe: %s \n"
+		     "    title: %s",
+		     cur_title.array, cur_exe.array);
+	}
+
+	dstr_free(&cur_title);
+	dstr_free(&cur_exe);
+}
+
 static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 			 obs_hotkey_t *hotkey, bool pressed)
 {
@@ -325,8 +345,10 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 	}
 	LeaveCriticalSection(&ctx->config_section);
 
-	if (needs_update)
+	if (needs_update) {
+		print_hotkey_window(ctx->config.hotkey_window);
 		SetEvent(ctx->events[EVENT_UPDATE]);
+	}
 
 	return true;
 }
