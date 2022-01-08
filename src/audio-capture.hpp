@@ -1,23 +1,24 @@
 #pragma once
 
+#include <cstdio>
 #include <optional>
-#include <stdio.h>
+#include <tuple>
 
 #include <windows.h>
+#include <wil/resource.h>
 
 #include <obs.h>
 #include <util/darray.h>
 
 #include "common.hpp"
-#include "window-helpers.hpp"
 #include "audio-capture-helper.hpp"
+#include "session-monitor.hpp"
 
 /* clang-format off */
 
 #define SETTING_MODE                   "mode"
 
-#define SETTING_WINDOW                 "window"
-#define SETTING_WINDOW_PRIORITY        "window_priority"
+#define SETTING_SESSION                "session"
 
 #define SETTING_EXCLUDE_PROCESS_TREE   "exclude_process_tree"
 
@@ -27,11 +28,7 @@
 #define TEXT_MODE_WINDOW               obs_module_text("Mode.Window")
 #define TEXT_MODE_HOTKEY               obs_module_text("Mode.Hotkey")
 
-#define TEXT_WINDOW                    obs_module_text("Window")
-#define TEXT_WINDOW_PRIORITY           obs_module_text("Window.Priority")
-#define TEXT_WINDOW_PRIORITY_TITLE     obs_module_text("Window.Priority.Title")
-#define TEXT_WINDOW_PRIORITY_CLASS     obs_module_text("Window.Priority.Class")
-#define TEXT_WINDOW_PRIORITY_EXE       obs_module_text("Window.Priority.Exe")
+#define TEXT_SESSION                   obs_module_text("Session")
 
 #define TEXT_HOTKEY_START              obs_module_text("Hotkey.Start")
 #define TEXT_HOTKEY_STOP               obs_module_text("Hotkey.Stop")
@@ -43,40 +40,82 @@
 
 /* clang-format on */
 
-enum mode { MODE_WINDOW, MODE_HOTKEY };
+namespace CaptureEvents {
+enum CaptureEvents {
+	Shutdown = WM_USER,
+	Update,
+	SessionAdded,
+	SessionExpired
+};
+}
 
-struct audio_capture_config_t {
-	enum mode mode;
-	HWND hotkey_window;
+enum mode { MODE_SESSION, MODE_HOTKEY };
 
-	window_info_t window_info;
-	enum window_priority priority;
+struct AudioCaptureConfig {
+	enum mode mode = MODE_SESSION;
 
-	bool exclude_process_tree;
+	std::optional<std::tuple<DWORD, std::string>> session;
+	HWND hotkey_window = NULL;
+
+	bool exclude_process_tree = false;
+
+	bool operator!=(const AudioCaptureConfig &other) const {
+		if (other.mode != mode)
+			return true;
+
+		if (other.exclude_process_tree != exclude_process_tree)
+			return true;
+
+		if (mode == MODE_HOTKEY)
+			return other.hotkey_window != hotkey_window;
+
+		return other.session != session;
+	}
+
+	bool operator==(const AudioCaptureConfig &other) const {
+		return !(*this != other);
+	}
 };
 
-struct audio_capture_context_t {
-	bool worker_initialized;
-	HANDLE worker_thread;
+class AudioCapture {
+private:
+	std::thread worker_thread;
+	DWORD worker_tid;
+	wil::unique_event worker_ready{wil::EventOptions::ManualReset};
 
-	CRITICAL_SECTION config_section;
-	audio_capture_config_t config;
+	wil::critical_section config_section;
+	AudioCaptureConfig config;
 
 	obs_hotkey_pair_id hotkey_pair;
 	obs_source_t *source;
 
-	CRITICAL_SECTION timer_section;
-	HANDLE timer;
-	HANDLE timer_queue;
-
-	HANDLE events[NUM_EVENTS];
-
+	std::optional<SessionMonitor> session_monitor;
 	std::optional<AudioCaptureHelper> helper;
 
-	HANDLE process;
-	DWORD process_id;
-	DWORD next_process_id;
+	wil::critical_section sessions_section;
+	std::set<std::tuple<DWORD, std::string>> sessions;
 
-	bool window_selected;
-	bool exclude_process_tree;
+	void StartCapture(DWORD pid, bool exclude);
+	void StopCapture();
+
+	void AddSession(const MSG &msg);
+	void RemoveSession(const MSG &msg);
+
+	void WorkerUpdate();
+
+	bool Tick(const MSG &msg);
+	void Run();
+
+public:
+	void Update(obs_data_t *settings);
+	std::set<std::tuple<DWORD, std::string>> GetSessions();
+
+	static std::tuple<std::string, std::string>
+	MakeSessionOptionStrings(DWORD pid, const std::string &executable);
+
+	static std::tuple<DWORD, std::string>
+	ParseSessionOptionVal(const char *val);
+
+	AudioCapture(obs_data_t *settings, obs_source_t *source);
+	~AudioCapture();
 };

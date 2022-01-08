@@ -80,6 +80,9 @@ private:
 	void ForwardPacket();
 
 public:
+	DWORD GetPid() { return pid; }
+	bool GetIncludeTree() { return include_tree; }
+
 	AudioCaptureHelper(obs_source_t *source, DWORD pid, bool include_tree);
 	~AudioCaptureHelper();
 };
