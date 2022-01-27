@@ -64,17 +64,21 @@ void AudioCapture::WorkerUpdate()
 	auto [target_pid, target_executable] = config.session.value();
 
 	// Search for a match with both PID and executable name first
-	if (sessions.contains({target_pid, target_executable})) {
-		StartCapture(target_pid, config.exclude_process_tree);
+	for (auto &[key, executable] : sessions) {
+		if (target_pid != key.pid ||
+		    target_executable != target_executable)
+			continue;
+
+		StartCapture(key.pid, config.exclude_process_tree);
 		return;
 	}
 
 	// Then try matching just the executable name
-	for (auto &[pid, executable] : sessions) {
+	for (auto &[key, executable] : sessions) {
 		if (target_executable != executable)
 			continue;
 
-		StartCapture(pid, config.exclude_process_tree);
+		StartCapture(key.pid, config.exclude_process_tree);
 		return;
 	}
 
@@ -85,30 +89,34 @@ void AudioCapture::WorkerUpdate()
 
 void AudioCapture::AddSession(const MSG &msg)
 {
-	auto pid = static_cast<DWORD>(msg.wParam);
+	auto key_ptr = reinterpret_cast<SessionKey *>(msg.wParam);
+	auto key = SessionKey(std::move(*key_ptr));
+	delete key_ptr;
 
 	auto executable_ptr = reinterpret_cast<std::string *>(msg.lParam);
 	auto executable = std::string(std::move(*executable_ptr));
 	delete executable_ptr;
 
-	debug("adding session: [%lu] %s", pid, executable.c_str());
+	debug("adding session: [%lu] %s", key.pid, executable.c_str());
 
 	auto lock = sessions_section.lock();
-	sessions.emplace(pid, executable);
+	sessions.emplace(key, executable);
 }
 
 void AudioCapture::RemoveSession(const MSG &msg)
 {
-	auto pid = static_cast<DWORD>(msg.wParam);
+	auto key_ptr = reinterpret_cast<SessionKey *>(msg.wParam);
+	auto key = SessionKey(std::move(*key_ptr));
+	delete key_ptr;
 
 	auto executable_ptr = reinterpret_cast<std::string *>(msg.lParam);
 	auto executable = std::string(std::move(*executable_ptr));
 	delete executable_ptr;
 
-	debug("removing session: [%lu] %s", pid, executable.c_str());
+	debug("removing session: [%lu] %s", key.pid, executable.c_str());
 
 	auto lock = sessions_section.lock();
-	sessions.erase({pid, executable});
+	sessions.erase(key);
 }
 
 bool AudioCapture::Tick(const MSG &msg)
@@ -168,7 +176,7 @@ void AudioCapture::Run()
 	StopCapture();
 }
 
-std::set<std::tuple<DWORD, std::string>> AudioCapture::GetSessions()
+std::unordered_map<SessionKey, std::string> AudioCapture::GetSessions()
 {
 	auto lock = sessions_section.lock();
 	return sessions;
@@ -338,9 +346,9 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_list_add_string(p, "", "");
 
 	auto sessions = ctx->GetSessions();
-	for (auto &[pid, executable] : sessions) {
-		auto [name, val] =
-			AudioCapture::MakeSessionOptionStrings(pid, executable);
+	for (auto &[key, executable] : sessions) {
+		auto [name, val] = AudioCapture::MakeSessionOptionStrings(
+			key.pid, executable);
 		obs_property_list_add_string(p, name.c_str(), val.c_str());
 	}
 

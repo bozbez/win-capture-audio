@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audiopolicy.h>
@@ -96,12 +97,13 @@ class SessionEventNotificationClient
 			      IAudioSessionEvents> {
 private:
 	DWORD worker_tid;
-	std::wstring session_id;
+	wil::com_ptr<IAudioSessionControl> session_control;
 
 public:
-	SessionEventNotificationClient(DWORD worker_tid,
-				       const std::wstring &session_id)
-		: worker_tid{worker_tid}, session_id{session_id}
+	SessionEventNotificationClient(
+		DWORD worker_tid,
+		const wil::com_ptr<IAudioSessionControl> &session_control)
+		: worker_tid{worker_tid}, session_control{session_control}
 	{
 	}
 
@@ -123,8 +125,10 @@ public:
 
 	STDMETHOD(OnSessionDisconnected)(AudioSessionDisconnectReason reason)
 	{
-		PostThreadMessageA(worker_tid, SessionEvents::SessionExpired,
-				   reinterpret_cast<WPARAM>(&session_id), NULL);
+		session_control->AddRef();
+		PostThreadMessageA(
+			worker_tid, SessionEvents::SessionExpired,
+			reinterpret_cast<WPARAM>(session_control.get()), NULL);
 		return S_OK;
 	}
 
@@ -137,9 +141,11 @@ public:
 	STDMETHOD(OnStateChanged)(AudioSessionState new_state)
 	{
 		if (new_state == AudioSessionStateExpired) {
+			session_control->AddRef();
 			PostThreadMessageA(
 				worker_tid, SessionEvents::SessionExpired,
-				reinterpret_cast<WPARAM>(&session_id), NULL);
+				reinterpret_cast<WPARAM>(session_control.get()),
+				NULL);
 		}
 
 		return S_OK;
@@ -195,6 +201,23 @@ public:
 	std::string GetExecutable() { return executable; }
 };
 
+struct SessionKey {
+	DWORD pid;
+	std::wstring id;
+
+	SessionKey(DWORD pid, const std::wstring &id) : pid{pid}, id{id} {}
+	bool operator==(const SessionKey&) const = default;
+};
+
+namespace std {
+template<> struct hash<SessionKey> {
+	size_t operator()(const SessionKey &k) const
+	{
+		return hash<DWORD>()(k.pid) ^ hash<std::wstring>()(k.id);
+	}
+};
+}
+
 class SessionMonitor {
 private:
 	DWORD client_tid;
@@ -210,9 +233,7 @@ private:
 	wil::com_ptr<IMMDeviceEnumerator> enumerator;
 
 	std::unordered_map<std::wstring, DeviceWatcher> device_watchers;
-	std::unordered_map<std::wstring, SessionWatcher> session_watchers;
-
-	std::set<std::tuple<DWORD, std::string>> sessions;
+	std::unordered_map<SessionKey, SessionWatcher> session_watchers;
 
 	void Init();
 	void UnInit();

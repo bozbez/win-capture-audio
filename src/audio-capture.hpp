@@ -93,7 +93,7 @@ private:
 	std::optional<AudioCaptureHelper> helper;
 
 	wil::critical_section sessions_section;
-	std::set<std::tuple<DWORD, std::string>> sessions;
+	std::unordered_map<SessionKey, std::string> sessions;
 
 	void StartCapture(DWORD pid, bool exclude);
 	void StopCapture();
@@ -108,7 +108,7 @@ private:
 
 public:
 	void Update(obs_data_t *settings);
-	std::set<std::tuple<DWORD, std::string>> GetSessions();
+	std::unordered_map<SessionKey, std::string> GetSessions();
 
 	static std::tuple<std::string, std::string>
 	MakeSessionOptionStrings(DWORD pid, const std::string &executable);
