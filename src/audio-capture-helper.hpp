@@ -55,7 +55,6 @@ enum HelperEvents {
 class AudioCaptureHelper {
 private:
 	DWORD pid;
-	bool include_tree;
 
 	obs_source_t *source;
 	wil::unique_couninitialize_call couninit{wil::CoInitializeEx()};
@@ -81,8 +80,7 @@ private:
 
 public:
 	DWORD GetPid() { return pid; }
-	bool GetIncludeTree() { return include_tree; }
 
-	AudioCaptureHelper(obs_source_t *source, DWORD pid, bool include_tree);
+	AudioCaptureHelper(obs_source_t *source, DWORD pid);
 	~AudioCaptureHelper();
 };

@@ -1,8 +1,9 @@
-#include <stdint.h>
-#include <math.h>
+#include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <format>
+#include <set>
 
 #include <windows.h>
 #include <stringapiset.h>
@@ -22,18 +23,29 @@
 #include "wil/result_macros.h"
 #include "audio-capture.hpp"
 
-void AudioCapture::StartCapture(DWORD pid, bool exclude)
+void AudioCapture::StartCapture(const std::set<DWORD> &new_pids)
 {
-	try {
-		if (helper.has_value() && helper.value().GetPid() == pid &&
-		    helper.value().GetIncludeTree() == !exclude)
-			return;
+	std::set<DWORD> current_pids;
+	for (auto &[current_pid, _] : helpers)
+		current_pids.insert(current_pid);
 
-		debug("starting capture on: %lu", pid);
-		helper.emplace(source, pid, !exclude);
-	} catch (wil::ResultException e) {
-		error("failed to create helper... update Windows?");
-		error("%s", e.what());
+	for (auto current_pid : current_pids) {
+		if (new_pids.contains(current_pid))
+			continue;
+
+		helpers.erase(current_pid);
+	}
+
+	for (auto new_pid : new_pids) {
+		if (current_pids.contains(new_pid))
+			continue;
+
+		try {
+			helpers.try_emplace(new_pid, source, new_pid);
+		} catch (wil::ResultException e) {
+			error("failed to create helper... update Windows?");
+			error("%s", e.what());
+		}
 	}
 }
 
@@ -41,9 +53,9 @@ void AudioCapture::StopCapture()
 {
 	try {
 		debug("stopping capture");
-		helper.reset();
+		helpers.clear();
 	} catch (wil::ResultException e) {
-		error("failed to destroy helper");
+		error("failed to destroy helpers");
 		error("%s", e.what());
 	}
 }
@@ -54,36 +66,38 @@ void AudioCapture::WorkerUpdate()
 	auto config = this->config;
 	config_lock.reset();
 
-	if (config.mode == MODE_HOTKEY)
+	if (config.mode == MODE_HOTKEY) {
+		if (config.hotkey_window == NULL) {
+			StopCapture();
+			return;
+		}
+
+		DWORD pid;
+		GetWindowThreadProcessId(config.hotkey_window, &pid);
+
+		StartCapture({pid});
 		return;
+	}
 
 	auto sessions_lock = sessions_section.lock();
 	auto sessions = this->sessions;
 	sessions_lock.reset();
 
-	auto [target_pid, target_executable] = config.session.value();
-
-	// Search for a match with both PID and executable name first
-	for (auto &[key, executable] : sessions) {
-		if (target_pid != key.pid ||
-		    target_executable != target_executable)
-			continue;
-
-		StartCapture(key.pid, config.exclude_process_tree);
-		return;
-	}
-
 	// Then try matching just the executable name
+	std::set<DWORD> pids;
 	for (auto &[key, executable] : sessions) {
-		if (target_executable != executable)
+		if (config.executable != executable)
 			continue;
 
-		StartCapture(key.pid, config.exclude_process_tree);
+		pids.insert(key.pid);
+	}
+
+	if (pids.size() > 0) {
+		StartCapture(pids);
 		return;
 	}
 
-	debug("target not found: [%lu] %s", target_pid,
-	      target_executable.c_str());
+	debug("target not found: %s", config.executable.value().c_str());
 	StopCapture();
 }
 
@@ -186,14 +200,12 @@ void AudioCapture::Update(obs_data_t *settings)
 {
 	AudioCaptureConfig new_config = {
 		.mode = (mode)obs_data_get_int(settings, SETTING_MODE),
-		.exclude_process_tree = obs_data_get_bool(
-			settings, SETTING_EXCLUDE_PROCESS_TREE),
 	};
 
 	if (new_config.mode == MODE_SESSION) {
 		const char *val =
 			obs_data_get_string(settings, SETTING_SESSION);
-		new_config.session = AudioCapture::ParseSessionOptionVal(val);
+		new_config.executable = std::string(val);
 	}
 
 	auto lock = config_section.lock();
@@ -214,6 +226,120 @@ static void audio_capture_update(void *data, obs_data_t *settings)
 	ctx->Update(settings);
 }
 
+bool AudioCapture::IsUwpWindow(HWND window)
+{
+	wchar_t name[256] = {L'\0'};
+
+	if (!GetClassNameW(window, name, sizeof(name) / sizeof(wchar_t)))
+		return false;
+
+	return wcscmp(name, L"ApplicationFrameWindow") == 0;
+}
+
+HWND AudioCapture::GetUwpActualWindow(HWND parent_window)
+{
+	DWORD parent_pid;
+	HWND child_window;
+
+	GetWindowThreadProcessId(parent_window, &parent_pid);
+	child_window = FindWindowEx(parent_window, NULL, NULL, NULL);
+
+	while (child_window != NULL) {
+		DWORD child_pid;
+		GetWindowThreadProcessId(child_window, &child_pid);
+
+		if (child_pid != parent_pid)
+			return child_window;
+
+		child_window =
+			FindWindowEx(parent_window, child_window, NULL, NULL);
+	}
+
+	return NULL;
+}
+
+void AudioCapture::HotkeyStart()
+{
+	auto lock = config_section.lock();
+	auto config_copy = this->config;
+	lock.reset();
+
+	if (config_copy.mode != MODE_HOTKEY)
+		return;
+
+	auto window = GetForegroundWindow();
+	if (AudioCapture::IsUwpWindow(window))
+		window = AudioCapture::GetUwpActualWindow(window);
+
+	lock = config_section.lock();
+	config.hotkey_window = window;
+	lock.reset();
+
+	PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL, NULL);
+}
+
+void AudioCapture::HotkeyStop()
+{
+	auto lock = config_section.lock();
+	if (config.mode != MODE_HOTKEY)
+		return;
+
+	config.hotkey_window = NULL;
+	lock.reset();
+
+	PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL, NULL);
+}
+
+static bool hotkey_start(void *data, obs_hotkey_pair_id id,
+			 obs_hotkey_t *hotkey, bool pressed)
+{
+	if (!pressed)
+		return false;
+
+	auto *ctx = static_cast<AudioCapture *>(data);
+	ctx->HotkeyStart();
+
+	return true;
+}
+
+static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey,
+			bool pressed)
+{
+	if (!pressed)
+		return false;
+
+	auto *ctx = static_cast<AudioCapture *>(data);
+	ctx->HotkeyStop();
+
+	return true;
+}
+
+AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source)
+	: source{source}
+{
+	Update(settings);
+
+	worker_thread = std::thread(&AudioCapture::Run, this);
+
+	worker_tid = GetThreadId(worker_thread.native_handle());
+	session_monitor.emplace(worker_tid, CaptureEvents::SessionAdded,
+				CaptureEvents::SessionExpired);
+
+	hotkey_pair = obs_hotkey_pair_register_source(
+		source, HOTKEY_START, TEXT_HOTKEY_START, HOTKEY_STOP,
+		TEXT_HOTKEY_STOP, hotkey_start, hotkey_stop, this, this);
+}
+
+static void *audio_capture_create(obs_data_t *settings, obs_source_t *source)
+{
+	try {
+		return new AudioCapture(settings, source);
+	} catch (wil::ResultException e) {
+		error("failed to create context: %s", e.what());
+		return nullptr;
+	}
+}
+
 AudioCapture::~AudioCapture()
 {
 	if (!worker_thread.joinable())
@@ -230,27 +356,6 @@ static void audio_capture_destroy(void *data)
 	delete ctx;
 }
 
-AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source)
-	: source{source}
-{
-	Update(settings);
-	worker_thread = std::thread(&AudioCapture::Run, this);
-
-	worker_tid = GetThreadId(worker_thread.native_handle());
-	session_monitor.emplace(worker_tid, CaptureEvents::SessionAdded,
-				CaptureEvents::SessionExpired);
-}
-
-static void *audio_capture_create(obs_data_t *settings, obs_source_t *source)
-{
-	try {
-		return new AudioCapture(settings, source);
-	} catch (wil::ResultException e) {
-		error("failed to create context: %s", e.what());
-		return nullptr;
-	}
-}
-
 static bool mode_callback(obs_properties_t *ps, obs_property_t *p,
 			  obs_data_t *settings)
 {
@@ -263,26 +368,23 @@ static bool mode_callback(obs_properties_t *ps, obs_property_t *p,
 }
 
 std::tuple<std::string, std::string>
-AudioCapture::MakeSessionOptionStrings(DWORD pid, const std::string &executable)
+AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids,
+				       const std::string &executable)
 {
-	std::string name = std::format("[{}] {}", pid, executable);
-	std::string val = std::format("{} {}", pid, executable);
+	auto pids_string = std::string();
 
-	return {name, val};
-}
+	if (pids.size() > 0) {
+		auto it = std::begin(pids);
+		pids_string.append(std::format("{}", *it));
 
-std::tuple<DWORD, std::string>
-AudioCapture::ParseSessionOptionVal(const char *val)
-{
-	auto val_str = std::string(val);
-	auto pos = val_str.find(" ");
+		++it;
+		for (auto end = std::end(pids); it != end; ++it)
+			pids_string.append(std::format(", {}", *it));
+	} else {
+		pids_string.append("*");
+	}
 
-	auto dword_str = val_str.substr(0, pos);
-	auto executable = val_str.substr(pos + 1);
-
-	auto pid = std::strtoul(dword_str.c_str(), NULL, 10);
-
-	return {pid, executable};
+	return {std::format("[{}] {}", pids_string, executable), executable};
 }
 
 static bool session_callback(obs_properties_t *ps, obs_property_t *p,
@@ -307,11 +409,8 @@ static bool session_callback(obs_properties_t *ps, obs_property_t *p,
 	}
 
 	if (cur_val && *cur_val && !match) {
-		auto [pid, executable] =
-			AudioCapture::ParseSessionOptionVal(cur_val);
-
-		auto [name, val] =
-			AudioCapture::MakeSessionOptionStrings(pid, executable);
+		auto [name, val] = AudioCapture::MakeSessionOptionStrings(
+			{}, std::string(cur_val));
 
 		obs_property_list_insert_string(p, 1, name.c_str(),
 						val.c_str());
@@ -333,7 +432,7 @@ static obs_properties_t *audio_capture_properties(void *data)
 	p = obs_properties_add_list(ps, SETTING_MODE, TEXT_MODE,
 				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 
-	obs_property_list_add_int(p, TEXT_MODE_WINDOW, MODE_SESSION);
+	obs_property_list_add_int(p, TEXT_MODE_SESSION, MODE_SESSION);
 	obs_property_list_add_int(p, TEXT_MODE_HOTKEY, MODE_HOTKEY);
 
 	obs_property_set_modified_callback(p, mode_callback);
@@ -346,17 +445,18 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_list_add_string(p, "", "");
 
 	auto sessions = ctx->GetSessions();
-	for (auto &[key, executable] : sessions) {
+
+	std::unordered_map<std::string, std::set<DWORD>> session_options;
+	for (auto &[key, executable] : sessions)
+		session_options[executable].insert(key.pid);
+
+	for (auto &[executable, pids] : session_options) {
 		auto [name, val] = AudioCapture::MakeSessionOptionStrings(
-			key.pid, executable);
+			pids, executable);
 		obs_property_list_add_string(p, name.c_str(), val.c_str());
 	}
 
 	obs_property_set_modified_callback(p, session_callback);
-
-	// Exclude process tree setting
-	p = obs_properties_add_bool(ps, SETTING_EXCLUDE_PROCESS_TREE,
-				    TEXT_EXCLUDE_PROCESS_TREE);
 
 	return ps;
 }
@@ -365,8 +465,6 @@ static void audio_capture_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, SETTING_MODE, MODE_SESSION);
 	obs_data_set_default_string(settings, SETTING_SESSION, "");
-	obs_data_set_default_bool(settings, SETTING_EXCLUDE_PROCESS_TREE,
-				  false);
 }
 
 static const char *audio_capture_get_name(void *type_data)

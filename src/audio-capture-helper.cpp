@@ -15,9 +15,7 @@
 
 AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
 {
-	auto mode = include_tree
-			    ? PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
-			    : PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
+	auto mode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
 
 	return {
 		.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
@@ -56,8 +54,8 @@ void AudioCaptureHelper::InitFormat()
 
 	client->GetMixFormat(wil::out_param(format));
 
-	info("format: ch:%d bps:%lu nbl:%d tag:%d", format->nChannels,
-	     format->nAvgBytesPerSec, format->nBlockAlign, format->wFormatTag);
+	debug("format: ch:%d bps:%lu nbl:%d tag:%d", format->nChannels,
+	    format->nAvgBytesPerSec, format->nBlockAlign, format->wFormatTag);
 }
 
 void AudioCaptureHelper::InitClient()
@@ -165,9 +163,8 @@ void AudioCaptureHelper::ForwardPacket()
 	}
 }
 
-AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid,
-				       bool include_tree)
-	: source{source}, pid{pid}, include_tree{include_tree}
+AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid)
+	: source{source}, pid{pid}
 {
 	for (auto& event : events)
 		event.create();
