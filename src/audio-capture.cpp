@@ -80,13 +80,12 @@ void AudioCapture::WorkerUpdate()
 	}
 
 	auto sessions_lock = sessions_section.lock();
-	auto sessions = this->sessions;
+	auto sessions = GetSessions();
 	sessions_lock.reset();
 
-	// Then try matching just the executable name
 	std::set<DWORD> pids;
 	for (auto &[key, executable] : sessions) {
-		if (config.executable != executable)
+		if ((config.executable != executable) ^ config.exclude)
 			continue;
 
 		pids.insert(key.pid);
@@ -200,6 +199,7 @@ void AudioCapture::Update(obs_data_t *settings)
 {
 	AudioCaptureConfig new_config = {
 		.mode = (mode)obs_data_get_int(settings, SETTING_MODE),
+		.exclude = obs_data_get_bool(settings, SETTING_EXCLUDE),
 	};
 
 	if (new_config.mode == MODE_SESSION) {
@@ -209,15 +209,10 @@ void AudioCapture::Update(obs_data_t *settings)
 	}
 
 	auto lock = config_section.lock();
-
-	auto need_update = new_config != config;
 	config = new_config;
-
 	lock.reset();
 
-	if (need_update)
-		PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL,
-				   NULL);
+	PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL, NULL);
 }
 
 static void audio_capture_update(void *data, obs_data_t *settings)
@@ -458,6 +453,9 @@ static obs_properties_t *audio_capture_properties(void *data)
 
 	obs_property_set_modified_callback(p, session_callback);
 
+	// Exclude setting
+	p = obs_properties_add_bool(ps, SETTING_EXCLUDE, TEXT_EXCLUDE);
+
 	return ps;
 }
 
@@ -465,6 +463,7 @@ static void audio_capture_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, SETTING_MODE, MODE_SESSION);
 	obs_data_set_default_string(settings, SETTING_SESSION, "");
+	obs_data_set_default_bool(settings, SETTING_EXCLUDE, false);
 }
 
 static const char *audio_capture_get_name(void *type_data)

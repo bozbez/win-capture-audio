@@ -17,8 +17,8 @@
 /* clang-format off */
 
 #define SETTING_MODE                   "mode"
-
 #define SETTING_SESSION                "session"
+#define SETTING_EXCLUDE                "exclude"
 
 #define TEXT_NAME                      obs_module_text("Name")
 
@@ -27,6 +27,7 @@
 #define TEXT_MODE_HOTKEY               obs_module_text("Mode.Hotkey")
 
 #define TEXT_SESSION                   obs_module_text("Session")
+#define TEXT_EXCLUDE                   obs_module_text("Exclude")
 
 #define TEXT_HOTKEY_START              obs_module_text("Hotkey.Start")
 #define TEXT_HOTKEY_STOP               obs_module_text("Hotkey.Stop")
@@ -48,21 +49,7 @@ struct AudioCaptureConfig {
 	std::optional<std::string> executable;
 	HWND hotkey_window = NULL;
 
-	bool operator!=(const AudioCaptureConfig &other) const
-	{
-		if (other.mode != mode)
-			return true;
-
-		if (mode == MODE_HOTKEY)
-			return other.hotkey_window != hotkey_window;
-
-		return other.executable != executable;
-	}
-
-	bool operator==(const AudioCaptureConfig &other) const
-	{
-		return !(*this != other);
-	}
+	bool exclude = false;
 };
 
 class AudioCapture {
