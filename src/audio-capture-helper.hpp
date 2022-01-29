@@ -15,6 +15,7 @@
 #include <wrl/implements.h>
 #include <wil/com.h>
 
+#include "mixer.hpp"
 #include "common.hpp"
 
 using namespace Microsoft::WRL;
@@ -56,13 +57,13 @@ class AudioCaptureHelper {
 private:
 	DWORD pid;
 
-	obs_source_t *source;
+	Mixer &mixer;
 	wil::unique_couninitialize_call couninit{wil::CoInitializeEx()};
 
 	wil::com_ptr<IAudioClient> client;
 	wil::com_ptr<IAudioCaptureClient> capture_client;
 
-	wil::unique_cotaskmem_ptr<WAVEFORMATEX> format;
+	WAVEFORMATEX format;
 
 	std::array<wil::unique_event, HelperEvents::Count> events;
 	std::thread capture_thread;
@@ -70,17 +71,17 @@ private:
 	AUDIOCLIENT_ACTIVATION_PARAMS GetParams();
 	PROPVARIANT GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params);
 
-	void InitFormat();
 	void InitClient();
-
 	void InitCapture();
 
-	void Capture();
 	void ForwardPacket();
+	
+	void Capture();
+	void CaptureSafe();
 
 public:
 	DWORD GetPid() { return pid; }
 
-	AudioCaptureHelper(obs_source_t *source, DWORD pid);
+	AudioCaptureHelper(Mixer &mixer, WAVEFORMATEX format, DWORD pid);
 	~AudioCaptureHelper();
 };

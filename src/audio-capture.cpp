@@ -41,7 +41,8 @@ void AudioCapture::StartCapture(const std::set<DWORD> &new_pids)
 			continue;
 
 		try {
-			helpers.try_emplace(new_pid, source, new_pid);
+			helpers.try_emplace(new_pid, mixer.value(), format,
+					    new_pid);
 		} catch (wil::ResultException e) {
 			error("failed to create helper... update Windows?");
 			error("%s", e.what());
@@ -313,6 +314,20 @@ AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source)
 	: source{source}
 {
 	Update(settings);
+
+	obs_audio_info info;
+	obs_get_audio_info(&info);
+
+	format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+	format.nChannels = info.speakers;
+	format.nSamplesPerSec = info.samples_per_sec;
+
+	format.nBlockAlign = format.nChannels * sizeof(float);
+	format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+	format.wBitsPerSample = CHAR_BIT * sizeof(float);
+	format.cbSize = 0;
+
+	mixer.emplace(source, format);
 
 	worker_thread = std::thread(&AudioCapture::Run, this);
 

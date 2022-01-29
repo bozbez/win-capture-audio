@@ -40,24 +40,6 @@ AudioCaptureHelper::GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params)
 	};
 }
 
-void AudioCaptureHelper::InitFormat()
-{
-	auto enumerator =
-		wil::CoCreateInstance<MMDeviceEnumerator, IMMDeviceEnumerator>();
-
-	wil::com_ptr<IMMDevice> device;
-	enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &device);
-
-	wil::com_ptr<IAudioClient> client;
-	device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL,
-			 client.put_void());
-
-	client->GetMixFormat(wil::out_param(format));
-
-	debug("format: ch:%d bps:%lu nbl:%d tag:%d", format->nChannels,
-	    format->nAvgBytesPerSec, format->nBlockAlign, format->wFormatTag);
-}
-
 void AudioCaptureHelper::InitClient()
 {
 	auto params = GetParams();
@@ -75,33 +57,64 @@ void AudioCaptureHelper::InitClient()
 
 	client = completion_handler.client;
 
-	client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-			   AUDCLNT_STREAMFLAGS_LOOPBACK |
-				   AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-			   5 * 10000000, 0, format.get(), NULL);
+	THROW_IF_FAILED(
+		client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+				   AUDCLNT_STREAMFLAGS_LOOPBACK |
+					   AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+				   5 * 10000000, 0, &format, NULL));
 
-	client->SetEventHandle(events[HelperEvents::PacketReady].get());
+	THROW_IF_FAILED(client->SetEventHandle(
+		events[HelperEvents::PacketReady].get()));
 }
 
 void AudioCaptureHelper::InitCapture()
 {
-	InitFormat();
 	InitClient();
+	THROW_IF_FAILED(client->GetService(__uuidof(IAudioCaptureClient),
+					   capture_client.put_void()));
+}
+void AudioCaptureHelper::ForwardPacket()
+{
+	size_t frame_size = format.nBlockAlign;
 
-	client->GetService(__uuidof(IAudioCaptureClient),
-			   capture_client.put_void());
+	UINT32 num_frames = 0;
+	THROW_IF_FAILED(capture_client->GetNextPacketSize(&num_frames));
+
+	while (num_frames > 0) {
+		BYTE *new_data;
+		DWORD flags;
+		UINT64 qpc_position;
+
+		THROW_IF_FAILED(capture_client->GetBuffer(
+			&new_data, &num_frames, &flags, NULL, &qpc_position));
+
+		if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
+			mixer.SubmitPacket(qpc_position,
+					   reinterpret_cast<float *>(new_data),
+					   num_frames);
+		}
+
+		if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
+			warn("data discontinuity flag set");
+
+		if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
+			warn("timestamp error flag set");
+
+		THROW_IF_FAILED(capture_client->ReleaseBuffer(num_frames));
+		THROW_IF_FAILED(capture_client->GetNextPacketSize(&num_frames));
+	}
 }
 
 void AudioCaptureHelper::Capture()
 {
 	InitCapture();
-	client->Start();
+	THROW_IF_FAILED(client->Start());
 
 	bool shutdown = false;
 	while (!shutdown) {
 		auto event_id = WaitForMultipleObjects(
 			events.size(), events[0].addressof(), FALSE, INFINITE);
-			
+
 		switch (event_id) {
 		case HelperEvents::PacketReady:
 			ForwardPacket();
@@ -118,58 +131,26 @@ void AudioCaptureHelper::Capture()
 		}
 	}
 
-	client->Stop();
+	THROW_IF_FAILED(client->Stop());
 }
 
-void AudioCaptureHelper::ForwardPacket()
+void AudioCaptureHelper::CaptureSafe()
 {
-	obs_source_audio packet = {
-		.speakers = get_obs_speaker_layout(format.get()),
-		.format = get_obs_format(format.get()),
-		.samples_per_sec = format->nSamplesPerSec,
-	};
-
-	size_t frame_size = format->nBlockAlign;
-	size_t frame_size_packed =
-		(format->wBitsPerSample * format->nChannels) / CHAR_BIT;
-
-	UINT32 num_frames = 0;
-	capture_client->GetNextPacketSize(&num_frames);
-
-	while (num_frames > 0) {
-		BYTE *new_data;
-		DWORD flags;
-		UINT64 qpc_position;
-
-		capture_client->GetBuffer(&new_data, &num_frames, &flags, NULL,
-					  &qpc_position);
-
-		if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
-			packet.timestamp = qpc_position * 100;
-			packet.frames = num_frames;
-
-			packet.data[0] = new_data;
-			obs_source_output_audio(source, &packet);
-		}
-
-		if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
-			warn("data discontinuity flag set");
-
-		if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
-			warn("timestamp error flag set");
-
-		capture_client->ReleaseBuffer(num_frames);
-		capture_client->GetNextPacketSize(&num_frames);
+	try {
+		Capture();
+	} catch (wil::ResultException e) {
+		error("%s", e.what());
 	}
 }
 
-AudioCaptureHelper::AudioCaptureHelper(obs_source_t *source, DWORD pid)
-	: source{source}, pid{pid}
+AudioCaptureHelper::AudioCaptureHelper(Mixer &mixer, WAVEFORMATEX format,
+				       DWORD pid)
+	: mixer{mixer}, format{format}, pid{pid}
 {
-	for (auto& event : events)
+	for (auto &event : events)
 		event.create();
 
-	capture_thread = std::thread(&AudioCaptureHelper::Capture, this);
+	capture_thread = std::thread(&AudioCaptureHelper::CaptureSafe, this);
 }
 
 AudioCaptureHelper::~AudioCaptureHelper()

@@ -64,6 +64,9 @@ private:
 	obs_hotkey_pair_id hotkey_pair;
 	obs_source_t *source;
 
+	WAVEFORMATEX format;
+	std::optional<Mixer> mixer;
+
 	std::optional<SessionMonitor> session_monitor;
 	std::unordered_map<DWORD, AudioCaptureHelper> helpers;
 
