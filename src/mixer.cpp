@@ -23,17 +23,13 @@ UINT64 Mixer::GetCurrentTimestamp()
 
 std::size_t Mixer::DurationToFrames(UINT64 duration)
 {
-	UINT64 ns_per_frame = 1000000000 / format.nSamplesPerSec;
-
 	UINT64 duration_ns = duration * 100;
-	return duration_ns / ns_per_frame;
+	return (duration_ns * format.nSamplesPerSec) / 1000000000;
 }
 
 UINT64 Mixer::FramesToDuration(std::size_t frames)
 {
-	UINT64 ns_per_frame = 1000000000 / format.nSamplesPerSec;
-
-	UINT64 duration_ns = frames * ns_per_frame;
+	UINT64 duration_ns = (frames * 1000000000) / format.nSamplesPerSec;
 	return duration_ns / 100;
 }
 
