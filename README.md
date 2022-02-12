@@ -20,3 +20,4 @@ WARNING: I am not able to guarantee that using this is anti-cheat safe, however 
 1. Head over to the [Releases](https://github.com/bozbez/win-capture-audio/releases) page and download the latest installer (or zip if you are using a portable installation)
 2. Run the setup wizard, selecting your OBS folder when asked (or extract the zip to the portable OBS root directory)
 3. Lauch OBS and check out the newly available "Application Audio Output Capture" source
+4. Enjoy Streaming and Recording
