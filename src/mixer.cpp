@@ -36,7 +36,6 @@ UINT64 Mixer::FramesToDuration(std::size_t frames)
 void Mixer::ProcessInput(UINT64 input_timestamp,
 			 std::vector<float> &input_buffer)
 {
-
 	if (mix.size() == 0) {
 		timestamp = input_timestamp;
 		mix = std::move(input_buffer);
@@ -45,7 +44,7 @@ void Mixer::ProcessInput(UINT64 input_timestamp,
 	}
 
 	if (input_timestamp < timestamp) {
-		warn("TODO: fix late input mixing");
+		warn("late mix input packet - mix_cutoff too low?");
 		return;
 	}
 
@@ -86,12 +85,7 @@ void Mixer::Tick()
 	auto cutoff_frames =
 		DurationToFrames((current_timestamp - mix_cutoff) - timestamp);
 
-	// Round so there is a multiple of 20 frames left in the mix buffer
-	auto mix_frames = mix.size() / format.nChannels;
-	cutoff_frames =
-		mix_frames - RoundToNearest(mix_frames - cutoff_frames, 20ull);
-
-	if (cutoff_frames * format.nChannels < mix.size() / 2)
+	if (cutoff_frames * format.nChannels < mix.size() / 20)
 		return;
 
 	obs_source_audio obs_packet = {

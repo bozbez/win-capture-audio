@@ -20,7 +20,7 @@ enum MixerEvents {
 
 class Mixer {
 private:
-	static const UINT64 mix_cutoff = 200000; // 20ms
+	static const UINT64 mix_cutoff = 800000; // 80ms
 
 	obs_source_t *source;
 

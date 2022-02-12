@@ -374,6 +374,9 @@ static bool mode_callback(obs_properties_t *ps, obs_property_t *p,
 	p = obs_properties_get(ps, SETTING_SESSION);
 	obs_property_set_visible(p, mode == MODE_SESSION);
 
+	p = obs_properties_get(ps, SETTING_EXCLUDE);
+	obs_property_set_visible(p, mode == MODE_SESSION);
+
 	return true;
 }
 
