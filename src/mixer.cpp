@@ -33,23 +33,21 @@ UINT64 Mixer::FramesToDuration(std::size_t frames)
 	return duration_ns / 100;
 }
 
-void Mixer::ProcessInput(UINT64 input_timestamp,
-			 std::vector<float> &input_buffer)
+void Mixer::ProcessInput(UINT64 input_timestamp, std::vector<float> &input_buffer)
 {
 	if (mix.size() == 0) {
-		timestamp = input_timestamp;
+		mix_timestamp = input_timestamp;
 		mix = std::move(input_buffer);
 
 		return;
 	}
 
-	if (input_timestamp < timestamp) {
+	if (input_timestamp < mix_timestamp) {
 		warn("late mix input packet - mix_cutoff too low?");
 		return;
 	}
 
-	auto offset = format.nChannels *
-		      DurationToFrames(input_timestamp - timestamp);
+	auto offset = format.nChannels * DurationToFrames(input_timestamp - mix_timestamp);
 
 	if (offset + input_buffer.size() > mix.size())
 		mix.resize(offset + input_buffer.size());
@@ -69,6 +67,28 @@ void Mixer::ProcessInput()
 	}
 }
 
+std::size_t Mixer::TimestampToMixOffset(UINT64 timestamp)
+{
+	if (timestamp < mix_timestamp)
+		return 0;
+
+	return min(mix.size() / format.nChannels, DurationToFrames(timestamp - mix_timestamp));
+}
+
+std::tuple<std::size_t, std::size_t> Mixer::CalculateCutoff(UINT64 timestamp)
+{
+	if (timestamp < cutoff_end)
+		return {0, 0};
+
+	if (timestamp < cutoff_start)
+		return {0, TimestampToMixOffset(timestamp - cutoff_end)};
+
+	auto start = TimestampToMixOffset(timestamp - cutoff_start);
+	auto end = TimestampToMixOffset(timestamp - cutoff_end);
+
+	return {start, end};
+}
+
 void Mixer::Tick()
 {
 	ProcessInput();
@@ -77,33 +97,29 @@ void Mixer::Tick()
 		return;
 
 	UINT64 current_timestamp = GetCurrentTimestamp();
+	auto [start, end] = CalculateCutoff(current_timestamp);
 
-	if (current_timestamp < mix_cutoff ||
-	    timestamp > current_timestamp - mix_cutoff)
+	if (start * format.nChannels >= mix.size()) {
+		mix.clear();
 		return;
-
-	auto cutoff_frames =
-		DurationToFrames((current_timestamp - mix_cutoff) - timestamp);
-
-	if (cutoff_frames * format.nChannels < mix.size() / 20)
+	} else if (end - start == 0)
 		return;
 
 	obs_source_audio obs_packet = {
-		.frames = static_cast<UINT32>(cutoff_frames),
+		.frames = static_cast<UINT32>(end - start),
 		.speakers = get_obs_speaker_layout(&format),
 		.format = get_obs_format(&format),
 		.samples_per_sec = format.nSamplesPerSec,
-		.timestamp = timestamp * 100,
+		.timestamp = (mix_timestamp + FramesToDuration(start)) * 100,
 	};
 
-	obs_packet.data[0] = reinterpret_cast<BYTE *>(mix.data());
+	obs_packet.data[0] = reinterpret_cast<BYTE *>(mix.data() + start * format.nChannels);
 	obs_source_output_audio(source, &obs_packet);
 
-	std::vector<float> new_mix(
-		mix.begin() + cutoff_frames * format.nChannels, mix.end());
+	std::vector<float> new_mix(mix.begin() + end * format.nChannels, mix.end());
 	mix = std::move(new_mix);
 
-	timestamp += FramesToDuration(cutoff_frames);
+	mix_timestamp += FramesToDuration(end);
 }
 
 void Mixer::Run()
@@ -146,8 +162,7 @@ void Mixer::SubmitPacket(UINT64 timestamp, float *data, UINT32 num_frames)
 	PostThreadMessageW(worker_tid, MixerEvents::Tick, NULL, NULL);
 }
 
-Mixer::Mixer(obs_source_t *source, WAVEFORMATEX format)
-	: source{source}, format{format}
+Mixer::Mixer(obs_source_t *source, WAVEFORMATEX format) : source{source}, format{format}
 {
 	worker_thread = std::thread(&Mixer::Run, this);
 	worker_tid = GetThreadId(worker_thread.native_handle());
