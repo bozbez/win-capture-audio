@@ -22,14 +22,18 @@ class Mixer {
 private:
 	static const UINT64 ms_in_ts = 10000;
 
-	static const UINT64 cutoff_start = 80 * ms_in_ts;
+	static const UINT64 cutoff_start = 120 * ms_in_ts;
 	static const UINT64 cutoff_end = 40 * ms_in_ts;
+
+	static const DWORD tick_interval = 10;
 
 	obs_source_t *source;
 
 	std::thread worker_thread;
 	DWORD worker_tid;
 	wil::unique_event worker_ready{wil::EventOptions::ManualReset};
+
+	HANDLE timer;
 
 	WAVEFORMATEX format;
 

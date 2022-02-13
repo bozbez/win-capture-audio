@@ -1,6 +1,10 @@
 #include "mixer.hpp"
 #include "format-conversion.hpp"
+#include "wil/result_macros.h"
 #include <basetsd.h>
+#include <memory>
+#include <processthreadsapi.h>
+#include <threadpoollegacyapiset.h>
 #include <winbase.h>
 #include <winuser.h>
 
@@ -43,7 +47,7 @@ void Mixer::ProcessInput(UINT64 input_timestamp, std::vector<float> &input_buffe
 	}
 
 	if (input_timestamp < mix_timestamp) {
-		warn("late mix input packet - mix_cutoff too low?");
+		warn("late mix input packet - increase cutoff_end?");
 		return;
 	}
 
@@ -158,7 +162,11 @@ void Mixer::SubmitPacket(UINT64 timestamp, float *data, UINT32 num_frames)
 	buffer.assign(data, data + num_frames * format.nChannels);
 
 	lock.reset();
+}
 
+static void CALLBACK post_tick(PVOID param, BOOLEAN)
+{
+	auto worker_tid = reinterpret_cast<intptr_t>(param);
 	PostThreadMessageW(worker_tid, MixerEvents::Tick, NULL, NULL);
 }
 
@@ -166,10 +174,16 @@ Mixer::Mixer(obs_source_t *source, WAVEFORMATEX format) : source{source}, format
 {
 	worker_thread = std::thread(&Mixer::Run, this);
 	worker_tid = GetThreadId(worker_thread.native_handle());
+
+	SetThreadPriority(worker_thread.native_handle(), THREAD_PRIORITY_HIGHEST);
+	CreateTimerQueueTimer(&timer, NULL, post_tick, reinterpret_cast<void *>(worker_tid),
+			      tick_interval, tick_interval, WT_EXECUTEINTIMERTHREAD);
 }
 
 Mixer::~Mixer()
 {
+	DeleteTimerQueueTimer(NULL, timer, INVALID_HANDLE_VALUE);
+
 	worker_ready.wait();
 	PostThreadMessageW(worker_tid, MixerEvents::Shutdown, NULL, NULL);
 	worker_thread.join();
