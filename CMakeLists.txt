@@ -14,9 +14,17 @@ configure_file(
     installer/installer.iss.in
     ../installer/installer.generated.iss
 )
+
+execute_process(
+    COMMAND git log -1 --format=%h
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        OUTPUT_VARIABLE GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 configure_file(
-    src/plugin-macros.h.in
-    ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.h
+    src/plugin-macros.hpp.in
+    ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.hpp
 )
 
 find_package(LibObs REQUIRED)
