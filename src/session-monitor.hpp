@@ -29,8 +29,7 @@ enum SessionEvents {
 }
 
 class DeviceNotificationClient
-	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
-			      IMMNotificationClient> {
+	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IMMNotificationClient> {
 private:
 	DWORD worker_tid;
 
@@ -59,12 +58,10 @@ public:
 	STDMETHOD(OnDeviceStateChanged)(LPCWSTR device_id, DWORD new_state)
 	{
 		auto id = new std::wstring(device_id);
-		UINT code = new_state == DEVICE_STATE_ACTIVE
-				    ? SessionEvents::DeviceAdded
-				    : SessionEvents::DeviceRemoved;
+		UINT code = new_state == DEVICE_STATE_ACTIVE ? SessionEvents::DeviceAdded
+							     : SessionEvents::DeviceRemoved;
 
-		PostThreadMessageA(worker_tid, code,
-				   reinterpret_cast<WPARAM>(id), NULL);
+		PostThreadMessageA(worker_tid, code, reinterpret_cast<WPARAM>(id), NULL);
 
 		return S_OK;
 	}
@@ -74,8 +71,7 @@ public:
 };
 
 class SessionNotificationClient
-	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
-			      IAudioSessionNotification> {
+	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IAudioSessionNotification> {
 
 private:
 	DWORD worker_tid;
@@ -93,23 +89,21 @@ public:
 };
 
 class SessionEventNotificationClient
-	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
-			      IAudioSessionEvents> {
+	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IAudioSessionEvents> {
 private:
 	DWORD worker_tid;
 	wil::com_ptr<IAudioSessionControl> session_control;
 
 public:
-	SessionEventNotificationClient(
-		DWORD worker_tid,
-		const wil::com_ptr<IAudioSessionControl> &session_control)
+	SessionEventNotificationClient(DWORD worker_tid,
+				       const wil::com_ptr<IAudioSessionControl> &session_control)
 		: worker_tid{worker_tid}, session_control{session_control}
 	{
 	}
 
 	STDMETHOD(OnChannelVolumeChanged)
-	(DWORD channel_count, float *new_channel_volume_array,
-	 DWORD changed_channel, LPCGUID event_context)
+	(DWORD channel_count, float *new_channel_volume_array, DWORD changed_channel,
+	 LPCGUID event_context)
 	{
 		return S_OK;
 	}
@@ -126,26 +120,20 @@ public:
 	STDMETHOD(OnSessionDisconnected)(AudioSessionDisconnectReason reason)
 	{
 		session_control->AddRef();
-		PostThreadMessageA(
-			worker_tid, SessionEvents::SessionExpired,
-			reinterpret_cast<WPARAM>(session_control.get()), NULL);
+		PostThreadMessageA(worker_tid, SessionEvents::SessionExpired,
+				   reinterpret_cast<WPARAM>(session_control.get()), NULL);
 		return S_OK;
 	}
 
 	STDMETHOD(OnSimpleVolumeChanged)
-	(float new_volume, BOOL new_mute, LPCGUID event_context)
-	{
-		return S_OK;
-	}
+	(float new_volume, BOOL new_mute, LPCGUID event_context) { return S_OK; }
 
 	STDMETHOD(OnStateChanged)(AudioSessionState new_state)
 	{
 		if (new_state == AudioSessionStateExpired) {
 			session_control->AddRef();
-			PostThreadMessageA(
-				worker_tid, SessionEvents::SessionExpired,
-				reinterpret_cast<WPARAM>(session_control.get()),
-				NULL);
+			PostThreadMessageA(worker_tid, SessionEvents::SessionExpired,
+					   reinterpret_cast<WPARAM>(session_control.get()), NULL);
 		}
 
 		return S_OK;
@@ -165,8 +153,7 @@ private:
 	SessionNotificationClient session_notification_client;
 
 public:
-	DeviceWatcher(std::wstring device_id, wil::com_ptr<IMMDevice> device,
-		      DWORD worker_tid);
+	DeviceWatcher(std::wstring device_id, wil::com_ptr<IMMDevice> device, DWORD worker_tid);
 
 	~DeviceWatcher();
 };
@@ -181,16 +168,11 @@ private:
 	std::string executable;
 
 public:
-	SessionWatcher(
-		DWORD worker_tid,
-		const wil::com_ptr<IAudioSessionControl> &session_control);
+	SessionWatcher(DWORD worker_tid, const wil::com_ptr<IAudioSessionControl> &session_control);
 
 	~SessionWatcher();
 
-	wil::com_ptr<IAudioSessionControl> GetSessionControl()
-	{
-		return session_control;
-	}
+	wil::com_ptr<IAudioSessionControl> GetSessionControl() { return session_control; }
 
 	wil::com_ptr<IAudioSessionControl2> GetSessionControl2()
 	{
@@ -206,7 +188,7 @@ struct SessionKey {
 	std::wstring id;
 
 	SessionKey(DWORD pid, const std::wstring &id) : pid{pid}, id{id} {}
-	bool operator==(const SessionKey&) const = default;
+	bool operator==(const SessionKey &) const = default;
 };
 
 namespace std {
@@ -251,7 +233,6 @@ private:
 	void SafeRun();
 
 public:
-	SessionMonitor(DWORD client_tid, UINT client_session_added,
-		       UINT client_session_expired);
+	SessionMonitor(DWORD client_tid, UINT client_session_added, UINT client_session_expired);
 	~SessionMonitor();
 };

@@ -89,8 +89,7 @@ public:
 	std::unordered_map<SessionKey, std::string> GetSessions();
 
 	static std::tuple<std::string, std::string>
-	MakeSessionOptionStrings(std::set<DWORD> pids,
-				 const std::string &executable);
+	MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable);
 
 	bool IsUwpWindow(HWND window);
 	HWND GetUwpActualWindow(HWND parent_window);

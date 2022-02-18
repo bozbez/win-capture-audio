@@ -56,10 +56,8 @@ static inline enum audio_format get_obs_format(WAVEFORMATEX *format)
 
 	case WAVE_FORMAT_EXTENSIBLE:
 		if (format_ex->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
-			return get_obs_pcm_format(
-				format_ex->Format.wBitsPerSample);
-		} else if (format_ex->SubFormat ==
-			   KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
+			return get_obs_pcm_format(format_ex->Format.wBitsPerSample);
+		} else if (format_ex->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
 			return AUDIO_FORMAT_FLOAT;
 		}
 	}

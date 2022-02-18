@@ -14,7 +14,7 @@ inline static void do_log_source(int level, const char *format, ...)
 {
 	va_list args;
 	va_start(args, format);
-	
+
 	blogva(level, format, args);
 
 	va_end(args);

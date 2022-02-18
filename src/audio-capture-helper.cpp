@@ -72,12 +72,14 @@ void AudioCaptureHelper::InitCapture()
 		client->GetService(__uuidof(IAudioCaptureClient), capture_client.put_void()));
 }
 
-void AudioCaptureHelper::RegisterMixer(Mixer *mixer) {
+void AudioCaptureHelper::RegisterMixer(Mixer *mixer)
+{
 	auto lock = mixers_section.lock();
 	mixers.insert(mixer);
 }
 
-bool AudioCaptureHelper::UnRegisterMixer(Mixer *mixer) {
+bool AudioCaptureHelper::UnRegisterMixer(Mixer *mixer)
+{
 	auto lock = mixers_section.lock();
 	mixers.erase(mixer);
 
