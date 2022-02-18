@@ -14,6 +14,10 @@ configure_file(
     installer/installer.iss.in
     ../installer/installer.generated.iss
 )
+configure_file(
+    src/plugin-macros.h.in
+    ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.h
+)
 
 find_package(LibObs REQUIRED)
 
