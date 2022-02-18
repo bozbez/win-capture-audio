@@ -68,7 +68,7 @@ private:
 	std::optional<Mixer> mixer;
 
 	std::optional<SessionMonitor> session_monitor;
-	std::unordered_map<DWORD, AudioCaptureHelper> helpers;
+	std::set<DWORD> pids;
 
 	wil::critical_section sessions_section;
 	std::unordered_map<SessionKey, std::string> sessions;

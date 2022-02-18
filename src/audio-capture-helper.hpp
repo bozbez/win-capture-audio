@@ -4,6 +4,7 @@
 #include <array>
 #include <functional>
 #include <thread>
+#include <set>
 
 #include <windows.h>
 
@@ -20,9 +21,8 @@
 
 using namespace Microsoft::WRL;
 
-struct CompletionHandler
-	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
-			      IActivateAudioInterfaceCompletionHandler> {
+struct CompletionHandler : public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase,
+					       IActivateAudioInterfaceCompletionHandler> {
 	wil::com_ptr<IAudioClient> client;
 
 	HRESULT activate_hr = E_FAIL;
@@ -35,8 +35,7 @@ struct CompletionHandler
 	{
 		auto set_finished = event_finished.SetEvent_scope_exit();
 
-		RETURN_IF_FAILED(operation->GetActivateResult(
-			&activate_hr, client.put_unknown()));
+		RETURN_IF_FAILED(operation->GetActivateResult(&activate_hr, client.put_unknown()));
 
 		if (FAILED(activate_hr))
 			error("activate failed (0x%lx)", activate_hr);
@@ -55,10 +54,12 @@ enum HelperEvents {
 
 class AudioCaptureHelper {
 private:
+	wil::unique_couninitialize_call couninit{wil::CoInitializeEx()};
+
 	DWORD pid;
 
-	Mixer &mixer;
-	wil::unique_couninitialize_call couninit{wil::CoInitializeEx()};
+	wil::critical_section mixers_section;
+	std::set<Mixer *> mixers;
 
 	wil::com_ptr<IAudioClient> client;
 	wil::com_ptr<IAudioCaptureClient> capture_client;
@@ -74,14 +75,18 @@ private:
 	void InitClient();
 	void InitCapture();
 
+	void ForwardToMixers(UINT64 qpc_position, BYTE *data, UINT32 num_frames);
 	void ForwardPacket();
-	
+
 	void Capture();
 	void CaptureSafe();
 
 public:
 	DWORD GetPid() { return pid; }
 
-	AudioCaptureHelper(Mixer &mixer, WAVEFORMATEX format, DWORD pid);
+	AudioCaptureHelper(Mixer *mixer, WAVEFORMATEX format, DWORD pid);
 	~AudioCaptureHelper();
+
+	void RegisterMixer(Mixer *mixer);
+	bool UnRegisterMixer(Mixer *mixer);
 };

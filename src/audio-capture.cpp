@@ -21,44 +21,37 @@
 #include <winuser.h>
 
 #include "wil/result_macros.h"
+
 #include "audio-capture.hpp"
+#include "audio-capture-helper-manager.hpp"
+
+AudioCaptureHelperManager helper_manager;
 
 void AudioCapture::StartCapture(const std::set<DWORD> &new_pids)
 {
-	std::set<DWORD> current_pids;
-	for (auto &[current_pid, _] : helpers)
-		current_pids.insert(current_pid);
-
-	for (auto current_pid : current_pids) {
-		if (new_pids.contains(current_pid))
+	for (auto pid : pids) {
+		if (new_pids.contains(pid))
 			continue;
 
-		helpers.erase(current_pid);
+		helper_manager.UnRegisterMixer(pid, &mixer.value());
 	}
 
 	for (auto new_pid : new_pids) {
-		if (current_pids.contains(new_pid))
+		if (pids.contains(new_pid))
 			continue;
 
-		try {
-			helpers.try_emplace(new_pid, mixer.value(), format,
-					    new_pid);
-		} catch (wil::ResultException e) {
-			error("failed to create helper... update Windows?");
-			error("%s", e.what());
-		}
+		helper_manager.RegisterMixer(new_pid, &mixer.value());
 	}
+
+	pids = new_pids;
 }
 
 void AudioCapture::StopCapture()
 {
-	try {
-		debug("stopping capture");
-		helpers.clear();
-	} catch (wil::ResultException e) {
-		error("failed to destroy helpers");
-		error("%s", e.what());
-	}
+	for (auto pid : pids)
+		helper_manager.UnRegisterMixer(pid, &mixer.value());
+
+	pids.clear();
 }
 
 void AudioCapture::WorkerUpdate()
@@ -204,8 +197,7 @@ void AudioCapture::Update(obs_data_t *settings)
 	};
 
 	if (new_config.mode == MODE_SESSION) {
-		const char *val =
-			obs_data_get_string(settings, SETTING_SESSION);
+		const char *val = obs_data_get_string(settings, SETTING_SESSION);
 		new_config.executable = std::string(val);
 	}
 
@@ -247,8 +239,7 @@ HWND AudioCapture::GetUwpActualWindow(HWND parent_window)
 		if (child_pid != parent_pid)
 			return child_window;
 
-		child_window =
-			FindWindowEx(parent_window, child_window, NULL, NULL);
+		child_window = FindWindowEx(parent_window, child_window, NULL, NULL);
 	}
 
 	return NULL;
@@ -286,8 +277,7 @@ void AudioCapture::HotkeyStop()
 	PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL, NULL);
 }
 
-static bool hotkey_start(void *data, obs_hotkey_pair_id id,
-			 obs_hotkey_t *hotkey, bool pressed)
+static bool hotkey_start(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	if (!pressed)
 		return false;
@@ -298,8 +288,7 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 	return true;
 }
 
-static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey,
-			bool pressed)
+static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	if (!pressed)
 		return false;
@@ -310,24 +299,11 @@ static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey,
 	return true;
 }
 
-AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source)
-	: source{source}
+AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source) : source{source}
 {
 	Update(settings);
 
-	obs_audio_info info;
-	obs_get_audio_info(&info);
-
-	format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-	format.nChannels = info.speakers;
-	format.nSamplesPerSec = info.samples_per_sec;
-
-	format.nBlockAlign = format.nChannels * sizeof(float);
-	format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-	format.wBitsPerSample = CHAR_BIT * sizeof(float);
-	format.cbSize = 0;
-
-	mixer.emplace(source, format);
+	mixer.emplace(source, helper_manager.GetFormat());
 
 	worker_thread = std::thread(&AudioCapture::Run, this);
 
@@ -335,9 +311,9 @@ AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source)
 	session_monitor.emplace(worker_tid, CaptureEvents::SessionAdded,
 				CaptureEvents::SessionExpired);
 
-	hotkey_pair = obs_hotkey_pair_register_source(
-		source, HOTKEY_START, TEXT_HOTKEY_START, HOTKEY_STOP,
-		TEXT_HOTKEY_STOP, hotkey_start, hotkey_stop, this, this);
+	hotkey_pair = obs_hotkey_pair_register_source(source, HOTKEY_START, TEXT_HOTKEY_START,
+						      HOTKEY_STOP, TEXT_HOTKEY_STOP, hotkey_start,
+						      hotkey_stop, this, this);
 }
 
 static void *audio_capture_create(obs_data_t *settings, obs_source_t *source)
@@ -366,8 +342,7 @@ static void audio_capture_destroy(void *data)
 	delete ctx;
 }
 
-static bool mode_callback(obs_properties_t *ps, obs_property_t *p,
-			  obs_data_t *settings)
+static bool mode_callback(obs_properties_t *ps, obs_property_t *p, obs_data_t *settings)
 {
 	int mode = obs_data_get_int(settings, SETTING_MODE);
 
@@ -381,8 +356,7 @@ static bool mode_callback(obs_properties_t *ps, obs_property_t *p,
 }
 
 std::tuple<std::string, std::string>
-AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids,
-				       const std::string &executable)
+AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable)
 {
 	auto pids_string = std::string();
 
@@ -400,8 +374,7 @@ AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids,
 	return {std::format("[{}] {}", pids_string, executable), executable};
 }
 
-static bool session_callback(obs_properties_t *ps, obs_property_t *p,
-			     obs_data_t *settings)
+static bool session_callback(obs_properties_t *ps, obs_property_t *p, obs_data_t *settings)
 {
 	bool match = false;
 	size_t i = 0;
@@ -422,11 +395,9 @@ static bool session_callback(obs_properties_t *ps, obs_property_t *p,
 	}
 
 	if (cur_val && *cur_val && !match) {
-		auto [name, val] = AudioCapture::MakeSessionOptionStrings(
-			{}, std::string(cur_val));
+		auto [name, val] = AudioCapture::MakeSessionOptionStrings({}, std::string(cur_val));
 
-		obs_property_list_insert_string(p, 1, name.c_str(),
-						val.c_str());
+		obs_property_list_insert_string(p, 1, name.c_str(), val.c_str());
 		obs_property_list_item_disable(p, 1, true);
 		return true;
 	}
@@ -442,8 +413,8 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_t *p;
 
 	// Mode setting (specific session or hotkey)
-	p = obs_properties_add_list(ps, SETTING_MODE, TEXT_MODE,
-				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	p = obs_properties_add_list(ps, SETTING_MODE, TEXT_MODE, OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
 
 	obs_property_list_add_int(p, TEXT_MODE_SESSION, MODE_SESSION);
 	obs_property_list_add_int(p, TEXT_MODE_HOTKEY, MODE_HOTKEY);
@@ -451,8 +422,7 @@ static obs_properties_t *audio_capture_properties(void *data)
 	obs_property_set_modified_callback(p, mode_callback);
 
 	// Session setting
-	p = obs_properties_add_list(ps, SETTING_SESSION, TEXT_SESSION,
-				    OBS_COMBO_TYPE_LIST,
+	p = obs_properties_add_list(ps, SETTING_SESSION, TEXT_SESSION, OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_STRING);
 
 	obs_property_list_add_string(p, "", "");
@@ -464,8 +434,7 @@ static obs_properties_t *audio_capture_properties(void *data)
 		session_options[executable].insert(key.pid);
 
 	for (auto &[executable, pids] : session_options) {
-		auto [name, val] = AudioCapture::MakeSessionOptionStrings(
-			pids, executable);
+		auto [name, val] = AudioCapture::MakeSessionOptionStrings(pids, executable);
 		obs_property_list_add_string(p, name.c_str(), val.c_str());
 	}
 

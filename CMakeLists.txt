@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(win-capture-audio VERSION 2.2.1)
+project(win-capture-audio VERSION 2.2.2)
 
 set(PLUGIN_AUTHOR "bozbez")
 set(RELEASE_DIR "${PROJECT_SOURCE_DIR}/release")
