@@ -1,0 +1,3 @@
+#pragma once
+
+#define PLUGIN_VERSION "@CMAKE_PROJECT_VERSION@"
