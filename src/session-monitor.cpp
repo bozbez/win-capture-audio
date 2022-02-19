@@ -76,15 +76,13 @@ SessionWatcher::SessionWatcher(DWORD worker_tid,
 	WideCharToMultiByte(CP_UTF8, 0, name_buf, -1, &executable_path[0], num_chars, NULL, NULL);
 
 	executable = executable_path.substr(executable_path.find_last_of("\\") + 1);
-
-	// debug("registered new session: [%d] %s", pid, executable.c_str());
+	debug("registered new session: [%d] %s", pid, executable.c_str());
 }
 
 SessionWatcher::~SessionWatcher()
 {
 	session_control->UnregisterAudioSessionNotification(&notification_client.value());
-
-	// debug("session expired: [%d] %s", pid, executable.c_str());
+	debug("session expired: [%d] %s", pid, executable.c_str());
 }
 
 void SessionMonitor::Init()

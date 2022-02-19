@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <optional>
 #include <tuple>
+#include <set>
 
 #include <windows.h>
 #include <wil/resource.h>
@@ -17,7 +18,13 @@
 /* clang-format off */
 
 #define SETTING_MODE                   "mode"
-#define SETTING_SESSION                "session"
+
+#define SETTING_EXECUTABLE_LIST        "executable_list"
+
+#define SETTING_ACTIVE_SESSION_GROUP   "active_session_group"
+#define SETTING_ACTIVE_SESSION_LIST    "active_session_list"
+#define SETTING_ACTIVE_SESSION_ADD     "active_session_add"
+
 #define SETTING_EXCLUDE                "exclude"
 
 #define TEXT_NAME                      obs_module_text("Name")
@@ -26,7 +33,12 @@
 #define TEXT_MODE_SESSION              obs_module_text("Mode.Session")
 #define TEXT_MODE_HOTKEY               obs_module_text("Mode.Hotkey")
 
-#define TEXT_SESSION                   obs_module_text("Session")
+#define TEXT_EXECUTABLE_LIST           obs_module_text("ExecutableList")
+
+#define TEXT_ACTIVE_SESSION_GROUP      obs_module_text("ActiveSession.Group")
+#define TEXT_ACTIVE_SESSION_LIST       obs_module_text("ActiveSession.List")
+#define TEXT_ACTIVE_SESSION_ADD        obs_module_text("ActiveSession.Add")
+
 #define TEXT_EXCLUDE                   obs_module_text("Exclude")
 
 #define TEXT_HOTKEY_START              obs_module_text("Hotkey.Start")
@@ -46,7 +58,7 @@ enum mode { MODE_SESSION, MODE_HOTKEY };
 struct AudioCaptureConfig {
 	enum mode mode = MODE_SESSION;
 
-	std::optional<std::string> executable;
+	std::set<std::string> executables;
 	HWND hotkey_window = NULL;
 
 	bool exclude = false;
@@ -85,11 +97,16 @@ private:
 	void Run();
 
 public:
+	obs_source_t *GetSource() { return source; }
+
 	void Update(obs_data_t *settings);
 	std::unordered_map<SessionKey, std::string> GetSessions();
 
 	static std::tuple<std::string, std::string>
 	MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable);
+
+	void FillActiveSessionList(obs_property_t *session_list, obs_property_t *session_add);
+	std::set<std::string> GetExecutables(obs_data_t *settings);
 
 	bool IsUwpWindow(HWND window);
 	HWND GetUwpActualWindow(HWND parent_window);
