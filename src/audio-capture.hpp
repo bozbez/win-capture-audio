@@ -79,17 +79,10 @@ private:
 	WAVEFORMATEX format;
 	std::optional<Mixer> mixer;
 
-	std::optional<SessionMonitor> session_monitor;
 	std::set<DWORD> pids;
-
-	wil::critical_section sessions_section;
-	std::unordered_map<SessionKey, std::string> sessions;
 
 	void StartCapture(const std::set<DWORD> &new_pids);
 	void StopCapture();
-
-	void AddSession(const MSG &msg);
-	void RemoveSession(const MSG &msg);
 
 	void WorkerUpdate();
 
@@ -100,7 +93,6 @@ public:
 	obs_source_t *GetSource() { return source; }
 
 	void Update(obs_data_t *settings);
-	std::unordered_map<SessionKey, std::string> GetSessions();
 
 	static std::tuple<std::string, std::string>
 	MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable);

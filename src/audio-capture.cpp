@@ -73,9 +73,7 @@ void AudioCapture::WorkerUpdate()
 		return;
 	}
 
-	auto sessions_lock = sessions_section.lock();
-	auto sessions = GetSessions();
-	sessions_lock.reset();
+	auto sessions = SessionMonitor::Instance()->GetSessions();
 
 	std::set<DWORD> pids;
 	for (auto &[key, executable] : sessions) {
@@ -93,38 +91,6 @@ void AudioCapture::WorkerUpdate()
 	StopCapture();
 }
 
-void AudioCapture::AddSession(const MSG &msg)
-{
-	auto key_ptr = reinterpret_cast<SessionKey *>(msg.wParam);
-	auto key = SessionKey(std::move(*key_ptr));
-	delete key_ptr;
-
-	auto executable_ptr = reinterpret_cast<std::string *>(msg.lParam);
-	auto executable = std::string(std::move(*executable_ptr));
-	delete executable_ptr;
-
-	debug("adding session: [%lu] %s", key.pid, executable.c_str());
-
-	auto lock = sessions_section.lock();
-	sessions.emplace(key, executable);
-}
-
-void AudioCapture::RemoveSession(const MSG &msg)
-{
-	auto key_ptr = reinterpret_cast<SessionKey *>(msg.wParam);
-	auto key = SessionKey(std::move(*key_ptr));
-	delete key_ptr;
-
-	auto executable_ptr = reinterpret_cast<std::string *>(msg.lParam);
-	auto executable = std::string(std::move(*executable_ptr));
-	delete executable_ptr;
-
-	debug("removing session: [%lu] %s", key.pid, executable.c_str());
-
-	auto lock = sessions_section.lock();
-	sessions.erase(key);
-}
-
 bool AudioCapture::Tick(const MSG &msg)
 {
 	bool shutdown = false;
@@ -140,16 +106,8 @@ bool AudioCapture::Tick(const MSG &msg)
 		break;
 
 	case CaptureEvents::Update:
-		WorkerUpdate();
-		break;
-
 	case CaptureEvents::SessionAdded:
-		AddSession(msg);
-		WorkerUpdate();
-		break;
-
 	case CaptureEvents::SessionExpired:
-		RemoveSession(msg);
 		WorkerUpdate();
 		break;
 
@@ -169,6 +127,10 @@ void AudioCapture::Run()
 
 	worker_ready.SetEvent();
 
+	// Before current thread is running, any message won't be sent successfully.
+	// So here send Update again to make sure Tick() can be called once.
+	PostThreadMessageA(worker_tid, CaptureEvents::Update, NULL, NULL);
+
 	bool shutdown = false;
 	while (!shutdown) {
 		if (!GetMessage(&msg, reinterpret_cast<HWND>(-1), WM_USER, 0)) {
@@ -181,12 +143,6 @@ void AudioCapture::Run()
 
 	StopCapture();
 }
-
-std::unordered_map<SessionKey, std::string> AudioCapture::GetSessions()
-{
-	auto lock = sessions_section.lock();
-	return sessions;
-};
 
 void AudioCapture::Update(obs_data_t *settings)
 {
@@ -303,10 +259,10 @@ AudioCapture::AudioCapture(obs_data_t *settings, obs_source_t *source) : source{
 	mixer.emplace(source, helper_manager.GetFormat());
 
 	worker_thread = std::thread(&AudioCapture::Run, this);
-
 	worker_tid = GetThreadId(worker_thread.native_handle());
-	session_monitor.emplace(worker_tid, CaptureEvents::SessionAdded,
-				CaptureEvents::SessionExpired);
+
+	SessionMonitor::Instance()->RegisterEvent(worker_tid, CaptureEvents::SessionAdded,
+						  CaptureEvents::SessionExpired);
 
 	hotkey_pair = obs_hotkey_pair_register_source(source, HOTKEY_START, TEXT_HOTKEY_START,
 						      HOTKEY_STOP, TEXT_HOTKEY_STOP, hotkey_start,
@@ -325,6 +281,8 @@ static void *audio_capture_create(obs_data_t *settings, obs_source_t *source)
 
 AudioCapture::~AudioCapture()
 {
+	SessionMonitor::Instance()->UnRegisterEvent(worker_tid);
+
 	if (!worker_thread.joinable())
 		return;
 
@@ -447,7 +405,7 @@ void AudioCapture::FillActiveSessionList(obs_property_t *session_list, obs_prope
 {
 	auto *settings = obs_source_get_settings(GetSource());
 
-	auto sessions = GetSessions();
+	auto sessions = SessionMonitor::Instance()->GetSessions();
 	auto executables = GetExecutables(settings);
 
 	std::unordered_map<std::string, std::set<DWORD>> session_options;

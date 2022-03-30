@@ -201,10 +201,11 @@ public:
 
 class SessionMonitor {
 private:
-	DWORD client_tid;
+	wil::critical_section callbacks_lock;
+	std::unordered_map<DWORD, std::tuple<UINT, UINT>> callbacks; // cleint - {added, expired}
 
-	UINT client_session_added;
-	UINT client_session_expired;
+	wil::critical_section sessions_lock;
+	std::unordered_map<SessionKey, std::string> sessions_list;
 
 	std::thread worker_thread;
 	DWORD worker_tid;
@@ -231,7 +232,17 @@ private:
 	void Run();
 	void SafeRun();
 
+	SessionMonitor();
+
 public:
-	SessionMonitor(DWORD client_tid, UINT client_session_added, UINT client_session_expired);
+	static void Create();
+	static void Destroy();
+	static SessionMonitor *Instance();
+
 	~SessionMonitor();
+
+	void RegisterEvent(DWORD client_tid, UINT session_added, UINT session_expired);
+	void UnRegisterEvent(DWORD client_tid);
+
+	std::unordered_map<SessionKey, std::string> GetSessions();
 };
