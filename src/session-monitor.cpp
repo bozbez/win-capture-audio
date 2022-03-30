@@ -7,6 +7,24 @@
 
 #include "session-monitor.hpp"
 
+static SessionMonitor *instance = nullptr;
+
+void SessionMonitor::Create()
+{
+	instance = new SessionMonitor();
+}
+
+void SessionMonitor::Destroy()
+{
+	delete instance;
+	instance = nullptr;
+}
+
+SessionMonitor *SessionMonitor::Instance()
+{
+	return instance;
+}
+
 DeviceWatcher::DeviceWatcher(std::wstring device_id, wil::com_ptr<IMMDevice> device,
 			     DWORD worker_tid)
 	: device_id{device_id},
@@ -184,11 +202,16 @@ void SessionMonitor::AddSession(MSG msg)
 
 	auto executable = it->second.GetExecutable();
 
-	auto key_heap = new SessionKey(pid, session_id);
-	auto executable_heap = new std::string(executable);
+	{
+		auto lock = sessions_lock.lock();
+		sessions_list.emplace(SessionKey(pid, session_id), executable);
+	}
 
-	PostThreadMessageA(client_tid, client_session_added, reinterpret_cast<WPARAM>(key_heap),
-			   reinterpret_cast<LPARAM>(executable_heap));
+	{
+		auto lock = callbacks_lock.lock();
+		for (auto [client_tid, msgs] : callbacks)
+			PostThreadMessageA(client_tid, std::get<0>(msgs), 0, 0);
+	}
 }
 
 void SessionMonitor::RemoveSession(MSG msg)
@@ -219,11 +242,18 @@ void SessionMonitor::RemoveSession(MSG msg)
 	if (num_removed == 0)
 		return;
 
-	auto key_heap = new SessionKey(pid, session_id);
-	auto executable_heap = new std::string(executable);
+	{
+		auto lock = sessions_lock.lock();
+		auto itr = sessions_list.find(SessionKey(pid, session_id));
+		if (itr != sessions_list.end())
+			sessions_list.erase(itr);
+	}
 
-	PostThreadMessageA(client_tid, client_session_expired, reinterpret_cast<WPARAM>(key_heap),
-			   reinterpret_cast<LPARAM>(executable_heap));
+	{
+		auto lock = callbacks_lock.lock();
+		for (auto [client_tid, msgs] : callbacks)
+			PostThreadMessageA(client_tid, std::get<1>(msgs), 0, 0);
+	}
 }
 
 void SessionMonitor::Run()
@@ -278,11 +308,7 @@ void SessionMonitor::SafeRun()
 	}
 }
 
-SessionMonitor::SessionMonitor(DWORD client_tid, UINT client_session_added,
-			       UINT client_session_expired)
-	: client_tid{client_tid},
-	  client_session_added{client_session_added},
-	  client_session_expired{client_session_expired}
+SessionMonitor::SessionMonitor()
 {
 	worker_thread = std::thread(&SessionMonitor::SafeRun, this);
 	worker_tid = GetThreadId(worker_thread.native_handle());
@@ -295,4 +321,24 @@ SessionMonitor::~SessionMonitor()
 	worker_ready.wait();
 	PostThreadMessageW(worker_tid, SessionEvents::Shutdown, NULL, NULL);
 	worker_thread.join();
+}
+
+void SessionMonitor::RegisterEvent(DWORD client_tid, UINT session_added, UINT session_expired)
+{
+	auto lock = callbacks_lock.lock();
+	callbacks[client_tid] = {session_added, session_expired};
+}
+
+void SessionMonitor::UnRegisterEvent(DWORD client_tid)
+{
+	auto lock = callbacks_lock.lock();
+	auto itr = callbacks.find(client_tid);
+	if (itr != callbacks.end())
+		callbacks.erase(itr);
+}
+
+std::unordered_map<SessionKey, std::string> SessionMonitor::GetSessions()
+{
+	auto lock = sessions_lock.lock();
+	return sessions_list;
 }
