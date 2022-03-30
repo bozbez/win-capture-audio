@@ -69,8 +69,9 @@ private:
 	std::array<wil::unique_event, HelperEvents::Count> events;
 	std::thread capture_thread;
 
-	AUDIOCLIENT_ACTIVATION_PARAMS GetParams();
-	PROPVARIANT GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params);
+	static AUDIOCLIENT_ACTIVATION_PARAMS GetParams(DWORD process_id,
+						       PROCESS_LOOPBACK_MODE mode);
+	static PROPVARIANT GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params);
 
 	void InitClient();
 	void InitCapture();
@@ -82,6 +83,8 @@ private:
 	void CaptureSafe();
 
 public:
+	static bool TestPluginAvailable();
+
 	DWORD GetPid() { return pid; }
 
 	AudioCaptureHelper(Mixer *mixer, WAVEFORMATEX format, DWORD pid);
