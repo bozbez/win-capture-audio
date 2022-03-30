@@ -29,6 +29,15 @@ configure_file(
 
 find_package(LibObs REQUIRED)
 
+set(win-capture-audio_HEADERS
+	src/audio-capture.hpp
+	src/audio-capture-helper.hpp
+	src/audio-capture-helper-manager.hpp
+	src/common.hpp
+	src/format-conversion.hpp
+	src/mixer.hpp
+	src/session-monitor.hpp)
+
 set(win-capture-audio_SOURCES
     src/plugin.cpp
     src/audio-capture.cpp
@@ -36,7 +45,7 @@ set(win-capture-audio_SOURCES
     src/session-monitor.cpp
     src/mixer.cpp)
 
-add_library(win-capture-audio MODULE ${win-capture-audio_SOURCES})
+add_library(win-capture-audio MODULE ${win-capture-audio_SOURCES} ${win-capture-audio_HEADERS})
 target_link_libraries(win-capture-audio libobs dwmapi psapi ksuser mmdevapi mfplat)
 
 set_property(TARGET win-capture-audio PROPERTY CXX_STANDARD 20)
