@@ -51,6 +51,6 @@
             }
         }
     },
-    "name": "obs-plugintemplate",
-    "version": "1.0.0"
+    "name": "win-capture-audio",
+    "version": "2.2.2"
 }
