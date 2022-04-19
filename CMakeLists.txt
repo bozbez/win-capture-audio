@@ -23,11 +23,6 @@ execute_process(
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-configure_file(
-    src/plugin-macros.hpp.in
-    ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.hpp
-)
-
 set(win-capture-audio_SOURCES
     src/plugin.cpp
     src/audio-capture.cpp
@@ -46,10 +41,10 @@ find_package(obs-frontend-api REQUIRED)
 include(cmake/ObsPluginHelpers.cmake)
 find_qt(VERSION ${QT_VERSION} COMPONENTS Widgets Core)
 
-configure_file(src/plugin-macros.h.in
-               ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.h)
+configure_file(src/plugin-macros.hpp.in
+               ${CMAKE_SOURCE_DIR}/src/plugin-macros.generated.hpp)
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-macros.generated.h)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-macros.generated.hpp)
 
 # --- Platform-independent build settings ---
 
