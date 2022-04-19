@@ -36,7 +36,7 @@ set(win-capture-audio_SOURCES
     src/mixer.cpp)
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${win-capture-audio_SOURCES})
-target_link_libraries(win-capture-audio dwmapi psapi ksuser mmdevapi mfplat)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dwmapi psapi ksuser mmdevapi mfplat)
 
 set_property(TARGET win-capture-audio PROPERTY CXX_STANDARD 23)
 target_include_directories(win-capture-audio PUBLIC ${CMAKE_SOURCE_DIR}/deps/wil/include)
