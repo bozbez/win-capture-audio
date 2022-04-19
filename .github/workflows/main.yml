@@ -33,12 +33,6 @@ jobs:
       - name: Run clang-format
         run: ./.github/scripts/check-format.sh && ./.github/scripts/check-changes.sh
 
-      - name: Install cmake-format
-        run: sudo pip install cmakelang
-
-      - name: Run cmake-format
-        run: ./.github/scripts/check-cmake.sh
-
   windows_build:
     name: 02 - Windows
     runs-on: windows-2022
