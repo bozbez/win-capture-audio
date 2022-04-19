@@ -28,7 +28,7 @@ runs:
   using: 'composite'
   steps:
     - name: Run macOS Build
-      if: ${{ false && runner.os == 'macOS' }}
+      if: ${{ runner.os == 'macOS' }}
       shell: zsh {0}
       env:
         CODESIGN_IDENT: ${{ inputs.codesignIdent }}
@@ -44,7 +44,7 @@ runs:
         ${{ inputs.workingDirectory }}/.github/scripts/build-macos.zsh ${build_args}
 
     - name: Run Linux Build
-      if: ${{ false && runner.os == 'Linux' }}
+      if: ${{ runner.os == 'Linux' }}
       shell: bash
       run: |
         build_args=(
