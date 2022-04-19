@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20.4)
 project(win-capture-audio VERSION 2.2.3)
 
 set(PLUGIN_AUTHOR "bozbez")
