@@ -175,8 +175,10 @@ Mixer::Mixer(obs_source_t *source, WAVEFORMATEX format) : source{source}, format
 	worker_thread = std::thread(&Mixer::Run, this);
 	worker_tid = GetThreadId(worker_thread.native_handle());
 
+	int64_t tid_64 = worker_tid;
+
 	SetThreadPriority(worker_thread.native_handle(), THREAD_PRIORITY_HIGHEST);
-	CreateTimerQueueTimer(&timer, NULL, post_tick, reinterpret_cast<void *>(worker_tid),
+	CreateTimerQueueTimer(&timer, NULL, post_tick, reinterpret_cast<void *>(tid_64),
 			      tick_interval, tick_interval, WT_EXECUTEINTIMERTHREAD);
 }
 

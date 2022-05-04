@@ -53,12 +53,13 @@ SessionWatcher::SessionWatcher(DWORD worker_tid,
 	THROW_IF_FAILED(GetSessionControl2()->GetSessionIdentifier(session_id_raw.put()));
 
 	session_id = session_id_raw.get();
-	notification_client.emplace(worker_tid, session_control);
+
+	THROW_IF_FAILED(GetSessionControl2()->GetProcessId(&pid));
+
+	notification_client.emplace(worker_tid, SessionKey(pid, session_id));
 
 	THROW_IF_FAILED(
 		session_control->RegisterAudioSessionNotification(&notification_client.value()));
-
-	THROW_IF_FAILED(GetSessionControl2()->GetProcessId(&pid));
 
 	wil::unique_process_handle session_process{
 		OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)};
@@ -165,24 +166,32 @@ void SessionMonitor::AddSession(MSG msg)
 	if (session_control2->IsSystemSoundsSession() == S_OK)
 		return;
 
-	wil::unique_cotaskmem_string session_id_raw;
-	THROW_IF_FAILED(session_control2->GetSessionIdentifier(session_id_raw.put()));
-
-	std::wstring session_id{session_id_raw.get()};
-
+	std::wstring session_id;
 	DWORD pid;
-	THROW_IF_FAILED(session_control2->GetProcessId(&pid));
 
-	if (session_watchers.contains({pid, session_id}))
+	std::string executable;
+
+	try {
+		wil::unique_cotaskmem_string session_id_raw;
+		THROW_IF_FAILED(session_control2->GetSessionIdentifier(session_id_raw.put()));
+
+		session_id = std::wstring(session_id_raw.get());
+		THROW_IF_FAILED(session_control2->GetProcessId(&pid));
+
+		if (session_watchers.contains({pid, session_id}))
+			return;
+
+		auto [it, inserted] = session_watchers.try_emplace({pid, session_id}, worker_tid,
+								   session_control);
+
+		if (!inserted)
+			return;
+
+		executable = it->second.GetExecutable();
+	} catch (wil::ResultException e) {
+		error("unable to add session: %s", e.what());
 		return;
-
-	auto [it, inserted] =
-		session_watchers.try_emplace({pid, session_id}, worker_tid, session_control);
-
-	if (!inserted)
-		return;
-
-	auto executable = it->second.GetExecutable();
+	}
 
 	auto key_heap = new SessionKey(pid, session_id);
 	auto executable_heap = new std::string(executable);
@@ -193,36 +202,21 @@ void SessionMonitor::AddSession(MSG msg)
 
 void SessionMonitor::RemoveSession(MSG msg)
 {
-	auto session_control_ptr = reinterpret_cast<IAudioSessionControl *>(msg.wParam);
+	auto session_key = reinterpret_cast<SessionKey *>(msg.wParam);
 
-	wil::com_ptr<IAudioSessionControl> session_control;
-	*session_control.put() = session_control_ptr;
-
-	auto session_control2 = session_control.query<IAudioSessionControl2>();
-
-	wil::unique_cotaskmem_string session_id_raw;
-	THROW_IF_FAILED(session_control2->GetSessionIdentifier(session_id_raw.put()));
-
-	std::wstring session_id{session_id_raw.get()};
-
-	DWORD pid;
-	THROW_IF_FAILED(session_control2->GetProcessId(&pid));
-
-	if (!session_watchers.contains({pid, session_id}))
+	if (!session_watchers.contains(*session_key))
 		return;
 
-	auto &session = session_watchers.at({pid, session_id});
+	auto &session = session_watchers.at(*session_key);
 
 	auto executable = session.GetExecutable();
-	auto num_removed = session_watchers.erase({pid, session_id});
+	auto num_removed = session_watchers.erase(*session_key);
 
 	if (num_removed == 0)
 		return;
 
-	auto key_heap = new SessionKey(pid, session_id);
 	auto executable_heap = new std::string(executable);
-
-	PostThreadMessageA(client_tid, client_session_expired, reinterpret_cast<WPARAM>(key_heap),
+	PostThreadMessageA(client_tid, client_session_expired, msg.wParam,
 			   reinterpret_cast<LPARAM>(executable_heap));
 }
 

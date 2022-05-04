@@ -28,6 +28,23 @@ enum SessionEvents {
 };
 }
 
+struct SessionKey {
+	DWORD pid;
+	std::wstring id;
+
+	SessionKey(DWORD pid, const std::wstring &id) : pid{pid}, id{id} {}
+	bool operator==(const SessionKey &) const = default;
+};
+
+namespace std {
+template<> struct hash<SessionKey> {
+	size_t operator()(const SessionKey &k) const
+	{
+		return hash<DWORD>()(k.pid) ^ hash<std::wstring>()(k.id);
+	}
+};
+}
+
 class DeviceNotificationClient
 	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IMMNotificationClient> {
 private:
@@ -92,12 +109,11 @@ class SessionEventNotificationClient
 	: public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IAudioSessionEvents> {
 private:
 	DWORD worker_tid;
-	wil::com_ptr<IAudioSessionControl> session_control;
+	SessionKey session_key;
 
 public:
-	SessionEventNotificationClient(DWORD worker_tid,
-				       const wil::com_ptr<IAudioSessionControl> &session_control)
-		: worker_tid{worker_tid}, session_control{session_control}
+	SessionEventNotificationClient(DWORD worker_tid, const SessionKey &session_key)
+		: worker_tid{worker_tid}, session_key{session_key}
 	{
 	}
 
@@ -119,9 +135,9 @@ public:
 
 	STDMETHOD(OnSessionDisconnected)(AudioSessionDisconnectReason reason)
 	{
-		session_control->AddRef();
+		auto session_key_msg = new SessionKey(session_key);
 		PostThreadMessageA(worker_tid, SessionEvents::SessionExpired,
-				   reinterpret_cast<WPARAM>(session_control.get()), NULL);
+				   reinterpret_cast<WPARAM>(session_key_msg), NULL);
 		return S_OK;
 	}
 
@@ -131,9 +147,9 @@ public:
 	STDMETHOD(OnStateChanged)(AudioSessionState new_state)
 	{
 		if (new_state == AudioSessionStateExpired) {
-			session_control->AddRef();
+			auto session_key_msg = new SessionKey(session_key);
 			PostThreadMessageA(worker_tid, SessionEvents::SessionExpired,
-					   reinterpret_cast<WPARAM>(session_control.get()), NULL);
+					   reinterpret_cast<WPARAM>(session_key_msg), NULL);
 		}
 
 		return S_OK;
@@ -182,23 +198,6 @@ public:
 	DWORD GetPid() { return pid; }
 	std::string GetExecutable() { return executable; }
 };
-
-struct SessionKey {
-	DWORD pid;
-	std::wstring id;
-
-	SessionKey(DWORD pid, const std::wstring &id) : pid{pid}, id{id} {}
-	bool operator==(const SessionKey &) const = default;
-};
-
-namespace std {
-template<> struct hash<SessionKey> {
-	size_t operator()(const SessionKey &k) const
-	{
-		return hash<DWORD>()(k.pid) ^ hash<std::wstring>()(k.id);
-	}
-};
-}
 
 class SessionMonitor {
 private:
