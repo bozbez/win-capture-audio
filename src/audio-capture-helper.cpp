@@ -13,15 +13,41 @@
 #include "audio-capture-helper.hpp"
 #include "format-conversion.hpp"
 
-AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams()
+bool system_supported = false;
+bool AudioCaptureHelper::TestPluginAvailable()
 {
-	auto mode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+	try {
+		auto params = AudioCaptureHelper::GetParams(
+			GetCurrentProcessId(), PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE);
+		auto propvariant = AudioCaptureHelper::GetPropvariant(&params);
 
+		wil::com_ptr<IActivateAudioInterfaceAsyncOperation> async_op;
+		CompletionHandler completion_handler;
+
+		THROW_IF_FAILED(ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+							    __uuidof(IAudioClient), &propvariant,
+							    &completion_handler, &async_op));
+
+		completion_handler.event_finished.wait();
+		THROW_IF_FAILED(completion_handler.activate_hr);
+
+		info("Plugin can be used");
+		return true;
+
+	} catch (wil::ResultException e) {
+		warn("Plugin is unavailable because of OS limit");
+		return false;
+	}
+}
+
+AUDIOCLIENT_ACTIVATION_PARAMS AudioCaptureHelper::GetParams(DWORD process_id,
+							    PROCESS_LOOPBACK_MODE mode)
+{
 	return {
 		.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
 		.ProcessLoopbackParams =
 			{
-				.TargetProcessId = pid,
+				.TargetProcessId = process_id,
 				.ProcessLoopbackMode = mode,
 			},
 	};
@@ -42,7 +68,7 @@ AudioCaptureHelper::GetPropvariant(AUDIOCLIENT_ACTIVATION_PARAMS *params)
 
 void AudioCaptureHelper::InitClient()
 {
-	auto params = GetParams();
+	auto params = GetParams(pid, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE);
 	auto propvariant = GetPropvariant(&params);
 
 	wil::com_ptr<IActivateAudioInterfaceAsyncOperation> async_op;

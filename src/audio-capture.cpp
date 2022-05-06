@@ -25,6 +25,8 @@
 #include "audio-capture.hpp"
 #include "audio-capture-helper-manager.hpp"
 
+extern bool system_supported;
+
 AudioCaptureHelperManager helper_manager;
 
 void AudioCapture::StartCapture(const std::set<DWORD> &new_pids)
@@ -512,6 +514,14 @@ static obs_properties_t *audio_capture_properties(void *data)
 	// Active session group
 	obs_properties_add_group(ps, SETTING_ACTIVE_SESSION_GROUP, TEXT_ACTIVE_SESSION_GROUP,
 				 OBS_GROUP_NORMAL, active_session_group);
+
+	if (!system_supported) {
+		obs_property_t *el = obs_properties_first(ps);
+		while (el != nullptr) {
+			obs_property_set_enabled(el, false);
+			obs_property_next(&el);
+		}
+	}
 
 	return ps;
 }
