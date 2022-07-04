@@ -13,7 +13,7 @@ Internally it uses [ActivateAudioInterfaceAsync](https://docs.microsoft.com/en-u
 
 ## Installation and Usage
 
-1. Head over to the [Releases](https://github.com/bozbez/win-capture-audio/releases/tag/v2.1.0-beta) page and download the latest installer (or zip if you are using a portable installation)
+1. Head over to the [Releases](https://github.com/bozbez/win-capture-audio/releases) page and download the latest installer (or zip if you are using a portable installation)
 2. Run the setup wizard, selecting your root OBS folder (`obs-studio/`, _not_ `obs-studio/obs-plugins/`) when asked (or extract the zip to the portable OBS root directory)
 3. Launch OBS and check out the newly available "Application Audio Output Capture" source
 
