@@ -202,7 +202,7 @@ public:
 class SessionMonitor {
 private:
 	wil::critical_section callbacks_lock;
-	std::unordered_map<DWORD, std::tuple<UINT, UINT>> callbacks; // cleint - {added, expired}
+	std::unordered_map<DWORD, std::tuple<UINT, UINT>> callbacks; // client - {added, expired}
 
 	wil::critical_section sessions_lock;
 	std::unordered_map<SessionKey, std::string> sessions_list;
