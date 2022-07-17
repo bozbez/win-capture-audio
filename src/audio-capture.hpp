@@ -92,6 +92,9 @@ private:
 public:
 	obs_source_t *GetSource() { return source; }
 
+	static std::set<DWORD> DeDuplicateCaptureList(const std::set<DWORD> &pids,
+						      const std::set<DWORD> &exclude);
+
 	void Update(obs_data_t *settings);
 
 	static std::tuple<std::string, std::string>
