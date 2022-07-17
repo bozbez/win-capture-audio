@@ -1,0 +1,179 @@
+name: Plugin Build
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '*'
+    tags:
+      - '*'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '*'
+
+env:
+  PLUGIN_NAME: 'win-capture-audio'
+
+jobs:
+  clang_check:
+    name: 01 - Code Format Check
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format-12
+
+      - name: Run clang-format
+        run: ./.github/scripts/check-format.sh && ./.github/scripts/check-changes.sh
+
+  windows_build:
+    name: 02 - Windows
+    runs-on: windows-2022
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [x86, x64]
+    if: always()
+    needs: [clang_check]
+    outputs:
+      commitHash: ${{ steps.setup.outputs.commitHash }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: plugin
+          submodules: recursive
+
+      - name: Checkout obs-studio
+        uses: actions/checkout@v3
+        with:
+          repository: 'obsproject/obs-studio'
+          path: obs-studio
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Environment
+        working-directory: ${{ github.workspace }}/plugin
+        id: setup
+        run: |
+          ## SETUP ENVIRONMENT SCRIPT
+          $CommitHash = (git rev-parse HEAD)[0..8] -join ''
+          Write-Output "::set-output name=commitHash::${CommitHash}"
+
+      - name: Check for GitHub Labels
+        id: seekingTesters
+        working-directory: ${{ github.workspace }}/plugin
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          ## GITHUB LABEL SCRIPT
+          $LabelFound = try {
+            $Params = @{
+              Authentication = 'Bearer'
+              Token = (ConvertTo-SecureString '${{ secrets.GITHUB_TOKEN }}' -AsPlainText)
+              Uri = '${{ github.event.pull_request.url }}'
+              UseBasicParsing = $true
+            }
+
+            (Invoke-RestMethod @Params).labels.name.contains('Seeking Testers')
+          } catch {
+            $false
+          }
+
+          Write-Output "::set-output name=found::$(([string]${LabelFound}).ToLower())"
+
+      - name: Build Plugin
+        uses: ./plugin/.github/actions/build-plugin
+        with:
+          workingDirectory: ${{ github.workspace }}/plugin
+          target: ${{ matrix.arch }}
+          config: RelWithDebInfo
+          visualStudio: 'Visual Studio 17 2022'
+
+      - name: Package Plugin
+        uses: ./plugin/.github/actions/package-plugin
+        with:
+          workingDirectory: ${{ github.workspace }}/plugin
+          target: ${{ matrix.arch }}
+          config: RelWithDebInfo
+
+      - name: Upload Build Artifact
+        if: ${{ success() && (github.event_name != 'pull_request' || steps.seekingTesters.outputs.found == 'true') }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.PLUGIN_NAME }}-windows-${{ matrix.arch }}-${{ steps.setup.outputs.commitHash }}
+          path: ${{ github.workspace }}/plugin/release/${{ env.PLUGIN_NAME }}-*.zip
+
+      - name: Package Plugin Installer
+        if: ${{ startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request' }}
+        uses: ./plugin/.github/actions/package-plugin
+        with:
+          workingDirectory: ${{ github.workspace }}/plugin
+          target: ${{ matrix.arch }}
+          config: RelWithDebInfo
+          createInstaller: true
+
+      - name: Upload Installer Artifact
+        if: ${{ startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.PLUGIN_NAME }}-windows-${{ matrix.arch }}-${{ steps.setup.outputs.commitHash }}-installer
+          path: ${{ github.workspace }}/plugin/release/${{ env.PLUGIN_NAME }}-*.exe
+
+
+  make-release:
+    name: 03 - Create and upload release
+    runs-on: ubuntu-20.04
+    if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    needs: [windows_build]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Get Metadata
+        id: metadata
+        run: |
+          ## METADATA SCRIPT
+          echo "::set-output name=version::${GITHUB_REF/refs\/tags\//}"
+          echo "::set-output name=date::$(date +"%Y-%m-%d")"
+          echo '::set-output name=commitHash::${{ needs.macos_build.outputs.commitHash }}'
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate Checksums
+        run: |
+          ## CHECKSUM GENERATION SCRIPT
+          shopt -s extglob
+          echo "### Checksums" > ${{ github.workspace }}/CHECKSUMS.txt
+          for file in ${{ github.workspace }}/**/@(*.pkg|*.exe|*.deb|*.zip); do
+            echo "    ${file##*/}: $(sha256sum "${file}" | cut -d " " -f 1)" >> ${{ github.workspace }}/CHECKSUMS.txt
+          done
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@1e07f4398721186383de40550babbdf2b84acfc5
+        with:
+          draft: false
+          prerelease: false
+          tag_name: ${{ steps.metadata.outputs.version }}
+          name: "${{ env.PLUGIN_NAME }} Build ${{ steps.metadata.outputs.version }}"
+          body_path: ${{ github.workspace }}/CHECKSUMS.txt
+          files: |
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-windows-x64-${{ steps.metadata.outputs.commitHash }}/*.zip
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-windows-x64-${{ steps.metadata.outputs.commitHash }}-installer/*.exe
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-windows-x86-${{ steps.metadata.outputs.commitHash }}/*.zip
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-windows-x86-${{ steps.metadata.outputs.commitHash }}-installer/*.exe
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-linux-x86_64-${{ steps.metadata.outputs.commitHash }}/*.deb
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-macos-x86_64-${{ steps.metadata.outputs.commitHash }}/*.pkg
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-macos-arm64-${{ steps.metadata.outputs.commitHash }}/*.pkg
+            ${{ github.workspace }}/${{ env.PLUGIN_NAME }}-macos-universal-${{ steps.metadata.outputs.commitHash }}/*.pkg

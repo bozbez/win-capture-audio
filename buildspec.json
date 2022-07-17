@@ -1,0 +1,32 @@
+{
+    "dependencies": {
+        "obs-studio": {
+            "version": "27.2.4",
+            "repository": "https://github.com/obsproject/obs-studio.git",
+            "branch": "master",
+            "hash": "bbeafeabdd1c00affa73657a0ac992dd9295fc15"
+        },
+        "obs-deps": {
+            "windows-x64": {
+                "version": "2022-03-16",
+                "hash": "ed73757d1faee1b8c4a9aeca539e1149704e430085608990771402e60074eec7"
+            },
+            "windows-x86": {
+                "version": "2022-03-16",
+                "hash": "4751f68488cf6d5dcc79fbf6735762154847ca509d669539b241bf4e5cbf7751"
+            }
+        },
+        "obs-deps-qt": {
+            "windows-x64": {
+                "version": "2022-03-16",
+                "hash": "4a5faed9bad327be079e08ed6715a287db8936d20e51b9cdfc7eb52d0a57c629"
+            },
+            "windows-x86": {
+                "version": "2022-03-16",
+                "hash": "6664bc60523a8c7c08690f6b800d8d57d830605b9c25d2ce41132c422b0c6e29"
+            }
+        }
+    },
+    "name": "win-capture-audio",
+    "version": "2.2.2"
+}
