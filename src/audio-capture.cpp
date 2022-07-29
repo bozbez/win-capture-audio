@@ -21,6 +21,7 @@
 #include <obs-properties.h>
 #include <util/bmem.h>
 #include <util/platform.h>
+#include <util/dstr.h>
 #include <winuser.h>
 
 #include "wil/result.h"
@@ -390,7 +391,8 @@ static bool mode_callback(obs_properties_t *ps, obs_property_t *p, obs_data_t *s
 }
 
 std::tuple<std::string, std::string>
-AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable)
+AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable,
+				       bool added = false)
 {
 	auto pids_string = std::string();
 
@@ -405,7 +407,11 @@ AudioCapture::MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &
 		pids_string.append("*");
 	}
 
-	return {std::format("[{}] {}", pids_string, executable), executable};
+	if (!added)
+		return {std::format("[{}] {}", pids_string, executable), executable};
+
+	static int id = 0;
+	return {std::format("[{}] {} (added)", pids_string, executable), std::format("{}", id++)};
 }
 
 static bool executable_list_callback(void *data, obs_properties_t *ps, obs_property_t *p,
@@ -485,20 +491,41 @@ void AudioCapture::FillActiveSessionList(obs_property_t *session_list, obs_prope
 	auto executables = GetExecutables(settings);
 
 	std::unordered_map<std::string, std::set<DWORD>> session_options;
-	for (auto &[key, executable] : sessions) {
-		if (executables.contains(executable))
-			continue;
-
+	for (auto &[key, executable] : sessions)
 		session_options[executable].insert(key.pid);
-	}
+
+	std::vector<std::tuple<std::string, std::set<DWORD>>> enabled_session_options;
+	std::vector<std::tuple<std::string, std::set<DWORD>>> disabled_session_options;
 
 	for (auto &[executable, pids] : session_options) {
+		if (executables.contains(executable)) {
+			disabled_session_options.push_back({executable, pids});
+			continue;
+		}
+
+		enabled_session_options.push_back({executable, pids});
+	}
+
+	auto cmp = [](auto a, auto b) {
+		return astrcmpi(std::get<0>(a).c_str(), std::get<0>(b).c_str()) < 0;
+	};
+
+	std::sort(enabled_session_options.begin(), enabled_session_options.end(), cmp);
+	std::sort(disabled_session_options.begin(), disabled_session_options.end(), cmp);
+
+	for (auto &[executable, pids] : enabled_session_options) {
 		auto [name, val] = AudioCapture::MakeSessionOptionStrings(pids, executable);
 		obs_property_list_add_string(session_list, name.c_str(), val.c_str());
 	}
 
-	obs_property_set_enabled(session_add, session_options.size() != 0);
-	obs_property_set_enabled(session_list, session_options.size() != 0);
+	for (auto &[executable, pids] : disabled_session_options) {
+		auto [name, val] = AudioCapture::MakeSessionOptionStrings(pids, executable, true);
+		auto idx = obs_property_list_add_string(session_list, name.c_str(), val.c_str());
+		obs_property_list_item_disable(session_list, idx, true);
+	}
+
+	obs_property_set_enabled(session_add, enabled_session_options.size() != 0);
+	obs_property_set_enabled(session_list, enabled_session_options.size() != 0);
 
 	obs_data_release(settings);
 }

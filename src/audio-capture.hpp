@@ -97,8 +97,8 @@ public:
 
 	void Update(obs_data_t *settings);
 
-	static std::tuple<std::string, std::string>
-	MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable);
+	std::tuple<std::string, std::string>
+	MakeSessionOptionStrings(std::set<DWORD> pids, const std::string &executable, bool added);
 
 	void FillActiveSessionList(obs_property_t *session_list, obs_property_t *session_add);
 	std::set<std::string> GetExecutables(obs_data_t *settings);
