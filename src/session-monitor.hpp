@@ -15,6 +15,7 @@
 #include <wrl/implements.h>
 
 #include "common.hpp"
+#include <optional>
 
 using namespace Microsoft::WRL;
 

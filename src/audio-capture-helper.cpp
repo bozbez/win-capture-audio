@@ -46,16 +46,17 @@ void AudioCaptureHelper::InitClient()
 	auto propvariant = GetPropvariant(&params);
 
 	wil::com_ptr<IActivateAudioInterfaceAsyncOperation> async_op;
-	CompletionHandler completion_handler;
+
+	Microsoft::WRL::ComPtr<CompletionHandler> completion_handler = Microsoft::WRL::Make<CompletionHandler>();
 
 	THROW_IF_FAILED(ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
 						    __uuidof(IAudioClient), &propvariant,
-						    &completion_handler, &async_op));
+						    completion_handler.Get(), &async_op));
 
-	completion_handler.event_finished.wait();
-	THROW_IF_FAILED(completion_handler.activate_hr);
+	completion_handler->event_finished.wait();
+	THROW_IF_FAILED(completion_handler->activate_hr);
 
-	client = completion_handler.client;
+	client = completion_handler->client;
 
 	THROW_IF_FAILED(
 		client->Initialize(AUDCLNT_SHAREMODE_SHARED,
@@ -102,12 +103,20 @@ void AudioCaptureHelper::ForwardPacket()
 	THROW_IF_FAILED(capture_client->GetNextPacketSize(&num_frames));
 
 	while (num_frames > 0) {
-		BYTE *new_data;
+		BYTE *new_data = nullptr;
 		DWORD flags;
 		UINT64 qpc_position;
 
-		THROW_IF_FAILED(capture_client->GetBuffer(&new_data, &num_frames, &flags, NULL,
-							  &qpc_position));
+		HRESULT hr = capture_client->GetBuffer(&new_data, &num_frames, &flags, NULL,
+			&qpc_position);
+
+		THROW_IF_FAILED(hr);
+		if (hr == AUDCLNT_S_BUFFER_EMPTY || new_data == nullptr)
+		{
+			THROW_IF_FAILED(capture_client->ReleaseBuffer(num_frames));
+			THROW_IF_FAILED(capture_client->GetNextPacketSize(&num_frames));
+			continue;
+		}
 
 		if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT))
 			ForwardToMixers(qpc_position, new_data, num_frames);
@@ -164,7 +173,7 @@ void AudioCaptureHelper::CaptureSafe()
 AudioCaptureHelper::AudioCaptureHelper(Mixer *mixer, WAVEFORMATEX format, DWORD pid)
 	: mixers{mixer}, format{format}, pid{pid}
 {
-	for (auto &event : events)
+ 	for (auto &event : events)
 		event.create();
 
 	capture_thread = std::thread(&AudioCaptureHelper::CaptureSafe, this);

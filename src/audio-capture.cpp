@@ -87,12 +87,15 @@ AudioCapture::DeDuplicateCaptureList(const std::set<DWORD> &pids,
 		for (auto pid : explicitly_captured_pids)
 			uncaptured_pids.erase(pid);
 
-		for (auto pid : uncaptured_pids) {
-			if (!explicitly_captured_pids.contains(parents[pid]))
+		auto iter = uncaptured_pids.begin();
+		while (iter != uncaptured_pids.end()) {
+			if (!explicitly_captured_pids.contains(parents[*iter]))
+			{
+				++iter;
 				continue;
-
-			implicitly_captured_pids.insert(pid);
-			uncaptured_pids.erase(pid);
+			}
+			implicitly_captured_pids.insert(*iter);
+			iter = uncaptured_pids.erase(iter);
 		}
 	}
 
